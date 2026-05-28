@@ -1,37 +1,42 @@
-# AI 公众号 Ship Pipeline
+<h1 align="center">☁️ fengyun-publish</h1>
 
-> 单人 AI 公众号〈研究 Agent 的云〉的端到端写作发布流水线。从选题、调研、写稿、评审、配图、排版、推草稿全自动,只在草稿箱留最后一击给人。
+<p align="center">
+  <b>单人 AI 公众号〈研究 Agent 的云〉的端到端写作发布流水线</b><br>
+  <sub>选题 · 调研 · 写稿 · 三轨评审 · 排版 · 配图 · 推草稿 — 19 步全自动落到草稿箱,只留最后一击给人</sub>
+</p>
 
-![Status](https://img.shields.io/badge/status-active-success) ![Phase](https://img.shields.io/badge/phase-18-blue) ![Round](https://img.shields.io/badge/round-26-orange) ![Python](https://img.shields.io/badge/python-3.x-blue) ![License](https://img.shields.io/badge/license-MIT-green)
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT"></a>
+  <img src="https://img.shields.io/badge/python-3.x-blue.svg" alt="Python">
+  <img src="https://img.shields.io/badge/Claude_Code-Agent_SDK-orange.svg" alt="Claude Code">
+  <a href="https://github.com/duliangkuan/fengyun-publish/commits/main"><img src="https://img.shields.io/github/last-commit/duliangkuan/fengyun-publish" alt="last commit"></a>
+  <a href="https://github.com/duliangkuan/fengyun-publish/stargazers"><img src="https://img.shields.io/github/stars/duliangkuan/fengyun-publish?style=social" alt="stars"></a>
+</p>
+
+<p align="center">
+  <a href="#这是什么">这是什么</a> ·
+  <a href="#架构">架构</a> ·
+  <a href="#pipeline-19-step以-write_agentmd-为权威">19 Step</a> ·
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#-关于作者">关于作者</a> ·
+  <a href="#-公众号--交流群--支持作者">支持作者</a>
+</p>
 
 ---
 
-## 一句话定位
+## 这是什么
 
-这是一个**端到端的 AI 公众号写作发布流水线**,由 Python + Claude Code skill 编排。从「热点选题 → 深度调研 → 写稿 → 三轨评审 → 排版 → 封面 → 推草稿」一共 19 步,产出直接落到微信公众号草稿箱,作者只需要在手机上做最后一次审阅 + 发布。
+一个**端到端的 AI 公众号写作发布流水线**,Python + Claude Code skill 编排。从「热点选题 → 深度调研 → 写稿 → 三轨评审 → 排版 → 封面 → 推草稿」一共 19 步,产出直接落到微信公众号草稿箱,作者只需要在手机上做最后一次审阅 + 发布。
 
 **为谁建**:对标数字生命卡兹克,一个人运营 AI 赛道公众号「研究 Agent 的云」(微信号 `FengYunAgent`)。
 
 **不是 prompt 链,是工业流水线**:
+
 - 19 个 BLOCKING Step + 物理 `gate.py` 拦截(任一 step 没真跑过都通不过)
 - 三轨独立 critic 投票(数字分 + 灵魂判断 + 挂名意愿),互不知晓彼此 verdict
 - 8 项 fake-pass 防伪字段(防主线程拍脑袋写占位)
 - 全自动 critic-revise loop,3 轮后走 `auto_partial_pass` / `auto_abort` 不等人
 - Round 25 文内图强制非空 + `assets/placeholder-sketch.png` 兜底,绝不发裸文
-
----
-
-## 项目规模
-
-| 指标 | 数字 |
-|---|---|
-| 工作区总体积 | 2.3 GB |
-| 工作区文件 | 76,530(含 vendor + 爬取语料) |
-| Git 追踪文件 | 620 |
-| Python 代码 | **15,016 行**(48 个 `tools/` 脚本) |
-| Markdown 文档 | **28,564 行**(165 篇核心文档 + 280 篇语料) |
-| 已完成 Phase | 1-9 + 17-18 LIVE(10-16 上云决策暂停) |
-| 当前迭代轮次 | Round 26 |
 
 ---
 
@@ -276,15 +281,59 @@ docker run -d --name we-mp-rss -p 8001:8001 ghcr.io/rachelos/we-mp-rss:latest
 
 ---
 
-## 联系
+## 🤝 关于作者
 
-- **作者**:duliangkuan(冯运,笔名「风云」)
-- **公众号**:研究 Agent 的云
-- **微信**:`FengYunAgent`
-- **邮箱**:2330304961@qq.com
+**风云**(冯运),公众号「研究 Agent 的云」主理人。一个人运营 AI 赛道公众号,
+所有发出的文章都是用这套 pipeline 跑出来的——README 里你看到的每一个 step,
+都是在我自己公众号上反复试过的活物,不是设计草稿。
+
+这是我的第一个 MIT 开源项目,欢迎 ⭐ star / 提 issue / 拍砖 / PR。
+
+| 渠道 | 怎么找到我 |
+|---|---|
+| 📰 **公众号** | 研究 Agent 的云(微信搜索关注) |
+| 💬 **微信号** | `FengYunAgent`(加好友请备注「来自 GitHub」) |
+| 📧 **邮箱** | 2330304961@qq.com |
+| 🐙 **GitHub** | [@duliangkuan](https://github.com/duliangkuan) |
 
 ---
 
-## License
+## 📱 公众号 · 交流群 · 支持作者
 
-私有项目,All Rights Reserved。
+> **如果这个项目对你有帮助:**
+> 扫码关注公众号 → 看真实在跑的产出长什么样。
+> 想和我以及其他独立 AI 公众号主理人聊技术与运营,加交流群。
+> 觉得值,可以请我喝杯咖啡 ☕,但 star 更值钱。
+
+<!--
+TODO 风云上传三张图到 assets/ 后,取消下面这段 HTML 注释:
+
+<table align="center">
+  <tr>
+    <th align="center">关注公众号</th>
+    <th align="center">加交流群</th>
+    <th align="center">请我喝咖啡 ☕</th>
+  </tr>
+  <tr>
+    <td><img src="assets/wechat_official_qr.png" width="200" alt="研究 Agent 的云"></td>
+    <td><img src="assets/wechat_group_qr.png" width="200" alt="AI 公众号交流群"></td>
+    <td><img src="assets/wechat_reward_qr.png" width="200" alt="赞赏码"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>研究 Agent 的云</sub></td>
+    <td align="center"><sub>群活码 · 不定期更新</sub></td>
+    <td align="center"><sub>这一杯让我多写几个 Step</sub></td>
+  </tr>
+</table>
+-->
+
+> 公众号 / 交流群 / 赞赏码二维码补充中(`assets/wechat_official_qr.png`、`assets/wechat_group_qr.png`、`assets/wechat_reward_qr.png`)。
+> 在那之前想第一时间联系作者,直接搜微信号 `FengYunAgent`,备注「来自 GitHub」会优先通过。
+
+---
+
+## 📜 License
+
+[MIT](LICENSE) · Copyright (c) 2026 duliangkuan(冯运,笔名「风云」)
+
+衍生作品请保留 [`NOTICE.md`](NOTICE.md) 里的致谢清单(卡兹克 / 宝玉 / 花叔 / 赛博山新)。
