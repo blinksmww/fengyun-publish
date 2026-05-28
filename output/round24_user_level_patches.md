@@ -275,7 +275,7 @@
 **找**:
 ```
 > 本 Skill 由 [女娲 · Skill造人术](https://github.com/alchaincyf/nuwa-skill) 生成
-> 蒸馏自:风云本人(=用户冯运,「研究Agent的云」公众号作者)
+> 蒸馏自:风云本人(「研究Agent的云」公众号作者)
 > 战略核心模式 ON:聚焦 decision-time verdict,非全人格
 > 蒸馏日期:2026-05-24
 > 数据飞轮 v0:`~/.claude/skills/fengyun-self/data/founder_feedback.jsonl`(空文件,等真实数据回流)

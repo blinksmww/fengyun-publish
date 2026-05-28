@@ -228,7 +228,7 @@ docker run -d --name we-mp-rss -p 8001:8001 ghcr.io/rachelos/we-mp-rss:latest
 | 词 | 含义 |
 |---|---|
 | **huashu**(花叔) | 项目内固定指克制版排版,暖象牙底 `#FAF9F5` + 陶土橙 `#D97757`。Round 21 锁定为唯一活跃渲染路径 |
-| **fengyun**(冯运) | 项目作者笔名 + 公众号主理人;脚本前缀 |
+| **fengyun**(风云) | 项目作者笔名 + 公众号主理人;脚本前缀 |
 | **ITI** | Information-Title-Information,风云自创三段漏斗:I-1 广搜 → T 数据驱动选题 → I-2 深搜 |
 | **critic 三轨** | Track A 数字分 + Track B 灵魂判断 + Track C 挂名意愿,gate_tree 投票 |
 | **Round** | 系统迭代轮次(当前 26);通常对应一次重要机制改动 |
@@ -283,7 +283,7 @@ docker run -d --name we-mp-rss -p 8001:8001 ghcr.io/rachelos/we-mp-rss:latest
 
 ## 🤝 关于作者
 
-**风云**(冯运),公众号「研究 Agent 的云」主理人。一个人运营 AI 赛道公众号,
+**风云**,公众号「研究 Agent 的云」主理人。一个人运营 AI 赛道公众号,
 所有发出的文章都是用这套 pipeline 跑出来的——README 里你看到的每一个 step,
 都是在我自己公众号上反复试过的活物,不是设计草稿。
 
@@ -334,6 +334,6 @@ TODO 风云上传三张图到 assets/ 后,取消下面这段 HTML 注释:
 
 ## 📜 License
 
-[MIT](LICENSE) · Copyright (c) 2026 duliangkuan(冯运,笔名「风云」)
+[MIT](LICENSE) · Copyright (c) 2026 风云(GitHub: duliangkuan)
 
-衍生作品请保留 [`NOTICE.md`](NOTICE.md) 里的致谢清单(卡兹克 / 宝玉 / 花叔 / 赛博山新)。
+衍生作品请保留 [`NOTICE.md`](NOTICE.md) 里的致谢清单(卡兹克 / 宝玉 / 花叔 / 赛博禅心)。

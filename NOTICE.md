@@ -32,7 +32,7 @@
 - **数字生命卡兹克** — 公众号长文风格与「横纵分析」方法论的早期参照
 - **宝玉** — Anthropic / OpenAI 译文体系与 baoyu-* 系列 skill 的开源
 - **花叔** — 一人公司视角、shipping velocity 哲学、`huashu-perspective` 灵感
-- **赛博山新** — AI 资讯播报体例参照
+- **赛博禅心** — AI 资讯播报体例参照
 
 skill 生态参考:
 - [Anthropic Claude Code Skills](https://docs.claude.com/en/docs/claude-code/skills)

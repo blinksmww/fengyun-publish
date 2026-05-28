@@ -3,7 +3,7 @@
 *评审日期：2026-05-21*
 *评审人：Steve Jobs（via steve-jobs-perspective skill）*
 *对象：fengyun-writer skill v1*
-*用户：风云（冯运），「研究 Agent 的云」公众号*
+*用户：风云，「研究 Agent 的云」公众号*
 
 ---
 
@@ -213,7 +213,7 @@ df.head(5)['name']  # 输出：乱码
 
 `wechat-ai-pubaccount-writer` 是什么？它是「写符合公众号爆款逻辑的 AI 文章」。
 
-`fengyun-writer` 是什么？它是「让 Claude 成为冯运本人的灵性副本」。
+`fengyun-writer` 是什么？它是「让 Claude 成为风云本人的灵性副本」。
 
 这个差异是真实的，不是改了名字。这是一种根本不同的逻辑：
 

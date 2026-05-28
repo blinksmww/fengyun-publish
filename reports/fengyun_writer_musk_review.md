@@ -3,7 +3,7 @@
 *评审日期：2026-05-21*
 *评审人：Elon Musk（via elon-musk-perspective skill）*
 *对象：fengyun-writer skill v1*
-*用户：风云（冯运），「研究 Agent 的云」公众号*
+*用户：风云，「研究 Agent 的云」公众号*
 
 ---
 

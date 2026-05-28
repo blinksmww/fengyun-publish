@@ -12,7 +12,7 @@
 |---|---|---|
 | `corpus/.raw/kazik/` | 175 | 卡兹克对标博主 |
 | `corpus/.raw/baoyu/` | 52 | 宝玉对标博主 |
-| `corpus/.raw/saiboshanxin/` | 50 | 赛博山新对标博主 |
+| `corpus/.raw/saiboshanxin/` | 50 | 赛博禅心对标博主 |
 | `output/drafts/` (风云) | 44 | 风云 ship/trial drafts |
 | **总计** | **321** | |
 
