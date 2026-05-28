@@ -298,36 +298,40 @@ docker run -d --name we-mp-rss -p 8001:8001 ghcr.io/rachelos/we-mp-rss:latest
 
 ---
 
-## 📱 公众号 · 交流群 · 支持作者
+## 📱 公众号 · 个人微信 · 交流群 · 支持作者
 
 > **如果这个项目对你有帮助:**
-> 扫码关注公众号 → 看真实在跑的产出长什么样。
-> 想和我以及其他独立 AI 公众号主理人聊技术与运营,加交流群。
-> 觉得值,可以请我喝杯咖啡 ☕,但 star 更值钱。
+> 关注公众号 → 看真实在跑的产出长什么样;
+> 加个人微信 → 1v1 聊技术或运营,备注「来自 GitHub」会优先通过;
+> 加交流群 → 和其他独立 AI 公众号主理人一起聊;
+> 觉得值 → 请我喝杯咖啡 ☕,但 star 更值钱。
 
 <!--
-TODO 风云上传三张图到 assets/ 后,取消下面这段 HTML 注释:
+TODO 风云上传四张图到 assets/ 后,取消下面这段 HTML 注释:
 
 <table align="center">
   <tr>
     <th align="center">关注公众号</th>
+    <th align="center">加个人微信</th>
     <th align="center">加交流群</th>
     <th align="center">请我喝咖啡 ☕</th>
   </tr>
   <tr>
-    <td><img src="assets/wechat_official_qr.png" width="200" alt="研究 Agent 的云"></td>
-    <td><img src="assets/wechat_group_qr.png" width="200" alt="AI 公众号交流群"></td>
-    <td><img src="assets/wechat_reward_qr.png" width="200" alt="赞赏码"></td>
+    <td><img src="assets/wechat_official_qr.png" width="180" alt="公众号 研究 Agent 的云"></td>
+    <td><img src="assets/wechat_personal_qr.png" width="180" alt="风云个人微信"></td>
+    <td><img src="assets/wechat_group_qr.png" width="180" alt="AI 公众号交流群"></td>
+    <td><img src="assets/wechat_reward_qr.png" width="180" alt="赞赏码"></td>
   </tr>
   <tr>
     <td align="center"><sub>研究 Agent 的云</sub></td>
+    <td align="center"><sub>FengYunAgent · 备注 GitHub</sub></td>
     <td align="center"><sub>群活码 · 不定期更新</sub></td>
     <td align="center"><sub>这一杯让我多写几个 Step</sub></td>
   </tr>
 </table>
 -->
 
-> 公众号 / 交流群 / 赞赏码二维码补充中(`assets/wechat_official_qr.png`、`assets/wechat_group_qr.png`、`assets/wechat_reward_qr.png`)。
+> 四张二维码补充中:`assets/wechat_official_qr.png`(公众号) · `assets/wechat_personal_qr.png`(个人微信) · `assets/wechat_group_qr.png`(交流群活码) · `assets/wechat_reward_qr.png`(赞赏码)。
 > 在那之前想第一时间联系作者,直接搜微信号 `FengYunAgent`,备注「来自 GitHub」会优先通过。
 
 ---
