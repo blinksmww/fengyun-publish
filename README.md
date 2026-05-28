@@ -306,9 +306,6 @@ docker run -d --name we-mp-rss -p 8001:8001 ghcr.io/rachelos/we-mp-rss:latest
 > 加交流群 → 和其他独立 AI 公众号主理人一起聊;
 > 觉得值 → 请我喝杯咖啡 ☕,但 star 更值钱。
 
-<!--
-TODO 风云上传四张图到 assets/ 后,取消下面这段 HTML 注释:
-
 <table align="center">
   <tr>
     <th align="center">关注公众号</th>
@@ -329,10 +326,6 @@ TODO 风云上传四张图到 assets/ 后,取消下面这段 HTML 注释:
     <td align="center"><sub>这一杯让我多写几个 Step</sub></td>
   </tr>
 </table>
--->
-
-> 四张二维码补充中:`assets/wechat_official_qr.png`(公众号) · `assets/wechat_personal_qr.png`(个人微信) · `assets/wechat_group_qr.png`(交流群活码) · `assets/wechat_reward_qr.png`(赞赏码)。
-> 在那之前想第一时间联系作者,直接搜微信号 `FengYunAgent`,备注「来自 GitHub」会优先通过。
 
 ---
 
