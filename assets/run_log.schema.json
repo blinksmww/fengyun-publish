@@ -1,0 +1,45 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "fengyun-publish invocation log entry",
+  "description": "W4: 每个 skill/subagent/orchestrator stage 跑完写一个 <stage>.invocation.json 到 output/runs/<slug>/，取代旧的 frontmatter 防伪字段。gate.py 是消费者。",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "stage",
+    "skill_name",
+    "started_at",
+    "finished_at",
+    "version",
+    "round",
+    "input_hash",
+    "output_files",
+    "result",
+    "summary"
+  ],
+  "properties": {
+    "stage": {
+      "type": "string",
+      "enum": [
+        "iti",
+        "writer",
+        "verify",
+        "critic_b_huashu",
+        "critic_c_content_judge",
+        "cover",
+        "render"
+      ]
+    },
+    "skill_name": { "type": "string", "minLength": 1 },
+    "started_at": { "type": "string", "minLength": 1 },
+    "finished_at": { "type": "string", "minLength": 1 },
+    "version": { "type": "string", "minLength": 1 },
+    "round": { "type": "integer", "minimum": 0 },
+    "input_hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "output_files": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "result": { "type": "string", "minLength": 1 },
+    "summary": { "type": "string" }
+  }
+}

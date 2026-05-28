@@ -1,0 +1,1445 @@
+---
+name: fengyun-publish
+description: 风云 AI 公众号 end-to-end ship orchestrator。一句话触发就把 L0 → L7 全流程跑完 —— 调研、写初稿、机械 lint、王小波语感预审、三轨 critic vote、出封面、排版推草稿。当用户说「ship 一篇关于 X」「今天发一篇」「走完整流程」「全自动写一篇」或只给一个主题加「自动」时使用。只在「研究 Agent 的云」这个公众号项目语境里激活,工作目录默认 `D:\Dev\ai-wechat-pipeline\`。最终人工动作只有一个:风云在公众号草稿箱手动发出。
+---
+
+# fengyun-publish — 风云 AI 公众号 ship orchestrator
+
+## Skill 定位
+
+这是 System B 的编排层 skill,不是写作 skill。它把已经存在的写作 / lint / critic / 视觉 / 发布资产串起来,让风云说一句话就能跑完 L0 → L7。
+
+它跟 System A 的关系:
+- System A(`wechat-ai-pubaccount-writer` + critic v2.1)冻结,不动
+- 本 skill 默认走 System B(`fengyun-writer` + 三轨 vote)
+- 用户可显式指定 `system=A` 切回 System A(只调 critic v2.1 单轨)
+
+## 触发条件
+
+任意一种说法即激活:
+
+- 「ship 一篇关于 X 的文章」/「ship X」
+- 「今天发一篇」/「今天发关于 X」
+- 「走完整流程 / 跑完整流程」
+- 「全自动写一篇」/「自动 ship 一篇」
+- 用户只给主题/话题/事件 + 任意"自动 / 自己跑 / 一句话搞定 / 别问我"字眼
+
+不激活的反例(走 fengyun-writer 而不是本 skill):
+- 「用我的风格写一段 X」(只写不发,fengyun-writer)
+- 「帮我看下这段」(只评,critic)
+- 「改一下这篇 draft」(改稿,fengyun-writer)
+
+## 北极星(必背)
+
+每一步都问两个问题(NORTH_STAR.md):
+
+1. 这件事让「点击率」涨多少?(模块 1 钩子)
+2. 这件事让「完读率/转发率」涨多少?(模块 2 深度)
+
+两个都「不清楚」或「微小」→ 该步降级或跳过。
+
+## 关键路径
+
+- 项目根:`D:\Dev\ai-wechat-pipeline\`
+- 草稿:`output/drafts/YYYYMMDD-<slug>-v0.md`(每轮改稿 v1 / v2)
+- 封面:`output/images/YYYYMMDD-<slug>-cover.png`
+- 内文图:`output/images/YYYYMMDD-<slug>-NN-*.png`
+- 调研材料:`output/research/YYYYMMDD-<slug>.md`
+- 跑批日志:`output/runs/YYYYMMDD-<slug>.json`
+- 工具:`tools/{fengyun_lint,sop_v2_1,score_draft,fix_punctuation,ship,post_fengyun_publish,critic_vote}.py`
+- 微信凭证:`.env`(`WECHAT_APPID` / `WECHAT_SECRET`)
+
+## 全流程(9 步)
+
+> 命令行入口可选:`python tools/ship.py "主题"`。但很多步骤要 Claude 主导(写作 / 改稿 / 王小波诊断 / huashu/fengyun critic),所以**核心是这份 SKILL.md 里描述的工作流,让 Claude Code 顺序跑**。`ship.py` 是辅助 stub,把可机械化的步骤包好。
+
+---
+
+### Step 1 · 确认主题 + 北极星填空 + 数据驱动选题(Round 11,2026-05-24)⛔ BLOCKING
+
+**新增数据驱动子步骤**:不再凭主观挑「热点」,用 System A PHASE1 + topic_hotness.parquet 给候选打分。
+
+#### Step 1.0(新)ITI 架构数据驱动候选排序
+
+**Round 12 升级 2026-05-24**:从 aihot 单源升级到 **ITI 第一段聚合**(用户自创 ITI 架构,见 user-level memory `feedback_iti_architecture.md`)。
+
+**信源覆盖说明**:用 5 个「聚合源」间接覆盖 40+ 底层源(aihot/TrendRadar/smol.ai 自己已经合并了多个底层 RSS),**避免重复调 67 个 RSS**。但**TrendRadar 旧时(latest_daily 过期 > 36h)会丢 67 feed 覆盖** — 此时 WebSearch 补位。
+
+如果用户没指定具体事件,只给了「ship 一篇」「随便选个热点」这种泛指 → 跑 ITI 数据驱动选题:
+
+```python
+from tools.iti_collect import collect_pool          # I-1 广搜(NEW Round 12)
+from tools.topic_recommender import rank_aihot_candidates  # T 选题
+from tools.event_dedup import check_event_dedup     # T 去重
+
+# 1a. I-1 Python 信源:Python 脚本能调的 5 个源
+pool_result = collect_pool(hours=24)
+# pool_result["items"] = 15-30 条候选(用户硬约束 ≥10 两位数)
+# pool_result["degraded"] = True 时:候选不够 10 条,降级提示
+
+# 1b. I-1 WebSearch 补位(主线程必跑) — 用户原话「两个 I 都要用上 WebSearch」
+# 通过 4-6 个 generic query 覆盖 Python 脚本拉不到的源
+ws_items = []
+for query in [
+    "今日 AI 大事件",
+    "AI today industry news",
+    "Anthropic OpenAI 最新动态",
+    "Claude Skills latest",
+    # 当 TrendRadar 旧时(degraded.trendradar=True),额外加:
+    # "AI newsletter Stratechery Semianalysis 本周",
+]:
+    ws_items.extend(websearch_normalize(WebSearch(query)))
+
+# 1c. 合并 Python 池 + WebSearch 池,去重
+all_items = pool_result["items"] + ws_items
+# 用 event_dedup 二次去重避免 WebSearch 重复了 Python 拉到的
+
+# 2. T 选题:topic_recommender 用 PHASE1 + topic_hotness.parquet 排序
+ranked = rank_aihot_candidates(all_items)
+# 每项加 _predicted_burst_rate(0-1)/ _matched_family / _matched_keywords / _reason
+
+# 2. T 选题:topic_recommender 用 PHASE1 + topic_hotness.parquet 排序
+ranked = rank_aihot_candidates(pool_result["items"])
+# 每项加 _predicted_burst_rate(0-1)/ _matched_family / _matched_keywords / _reason
+
+# 3. T 去重:同一事件 7 天内已 ship 过的剔除(不去重同主题,只去重同事件)
+# Bug 4 修复(2026-05-25 Round 17):Step 1.x 时还没写 draft,无自身可排除
+#   ⚠️ 但 Step 6.5 / Step 7 之后再调 dedup,必须传 current_draft_path=draft_path
+filtered = [it for it in ranked
+            if not check_event_dedup(it, days=7)["is_duplicate"]]
+
+# 4. 打印 top 10 给用户看(对应「两位数候选」硬约束 + 预测爆款率 + 验证强度 + 原因)
+# 用户从 top 10 挑 1 个(风云 lived stake 二筛)
+```
+
+**降级路径**(I-1 失败时):
+- 6 信源全失败 → fallback 到原 aihot 单源调用(保留旧路径兼容)
+- pool_result["degraded"] = True(候选 < 10)→ 报警但继续,标记 run log `degraded.iti_collect = True`
+
+**数据驱动锁定**(PHASE1 v2 验证):
+- ✅ **优先**:Anthropic Skills(92%)/ Claude Code(87.5%)/ Vibe Coding(85.7%)/ Karpathy(88.9%)
+- 🟡 **次优**:Anthropic/Claude 家族(67.8%)
+- ❌ **避免标题凸显**:OpenAI / GPT(-9.3pp)/ 智谱 / GLM(-23.2pp)/ Sora / Veo(-47.2pp)
+- ⚠️ **过气**:提示词工程(2026-02→04 hotness 0.84→0)/ DeepSeek / Cursor
+
+#### Step 1.1 抽核心事件
+
+1. 从用户输入抽出核心事件。如果只给了主题词(如「Anthropic 新规」),直接确认:**「核心事件是 X 吗?」** 得到 yes 才继续
+   - 如果用户没指定 → 用 Step 1.0 数据驱动选题 top 1
+2. **必须填**北极星空白:**「读者读完应该感受到 ___」**(一句话,< 30 字,是感受不是知识)
+   - 写不出来 → 不开始(fengyun-writer Step -1 已要求)
+   - 不许把这一步「内化」掉,要打出来给用户看,并写进 `output/research/YYYYMMDD-<slug>.md` 顶端
+3. 生成 `slug`:核心事件的英文/拼音短标签(如 `anthropic-rsp-v2` / `claude47-skills`),用于文件命名
+
+#### Step 1.2(新)事件去重 check
+
+`event_dedup.check_event_dedup({title, summary}, days=7)` 必跑。如果 is_duplicate=True:
+- 报警「最近 7 天已 ship 过同事件 <matched_title>」
+- 建议:换角度 / 等几天 / 选别的事件
+- 不阻塞但要风云 confirm「确认要重发同事件吗」
+
+#### Step 1.3(关键铁律 2026-05-24)
+
+**❌ 不要做的事**(我之前犯过):
+- 「连续 3 篇 Anthropic = 主题集中度告警」 — **反 PHASE1 数据**(Anthropic 系连写都在涨)
+- 「类别要轮换 industry → paper → tip」 — **没数据支持**
+- 「主观判断读者疲劳」 — 没数据,subjective
+
+**✅ 真正该做的**:
+- 数据驱动 burst_rate 排序(PHASE1 + topic_hotness)
+- 同一事件 7 天去重(不是同主题)
+- 风云 lived stake 二筛(从高 burst_rate 池里挑作者能写的)
+
+### Step 1.5 · dogfood gate(Round 7 P0,2026-05-24)⛔ BLOCKING
+
+**目的**:Jobs Apple 内部 dogfood 原则在 IP 写作的对等机制 — 风云在大规模写作之前先确认「这个开头是不是我」。避免后续 3 轮改稿改的是 voice drift,不是真正的内容问题。
+
+**触发条件**:Step 1 北极星填空完成,Step 2 调研开始之前。
+
+#### 流程
+
+##### Round 13 升级(2026-05-24):开头 harness 循环
+
+**问题根因**:最近几篇开头同质化(「前几天看到 → 念了几遍 → 第一反应」公式重复)。
+
+**解法**:试稿后增加 **3 关 / 上限 3 次 retry** 的 harness 循环 — Musk × Jobs 第一性原理(数据驱动 + 反过拟合)。
+
+```python
+from tools.opening_signal import score_opening_signal
+from tools.opening_dedup import check_opening_overlap
+
+opening_loop_history = []  # 收集每次试稿 + 反馈,给下次 writer
+
+for attempt in range(3):  # 上限 3 次
+    # ────── L1 写 ──────
+    # 第 1 次:正常 fengyun-writer 试稿
+    # 第 2/3 次:把上次的 redo_feedback 注入 writer prompt
+    if attempt == 0:
+        trial = fengyun_writer_trial(north_star, core_event)
+    else:
+        prev_feedback = opening_loop_history[-1]["feedback"]
+        trial = fengyun_writer_trial(north_star, core_event,
+                                     avoid_feedback=prev_feedback)
+
+    # ────── L2 评(3 关并行)──────
+    signal = score_opening_signal(trial)  # 物理约束 + 4 维信号
+    # Bug 4 注释(2026-05-25 Round 17):Step 1.5 时 trial 是内存字符串
+    #   尚未写到 output/drafts/,无自身可排除。但 Step 6.5 revise loop
+    #   复跑 opening dedup 时,必须传 current_draft_path=draft_path 防 self-match。
+    dedup = check_opening_overlap(trial, max_age_days=30, max_n_check=5)
+
+    all_pass = (signal["verdict"] == "pass"
+                and signal["physical_pass"]
+                and not dedup["is_too_similar"])
+
+    opening_loop_history.append({
+        "attempt": attempt + 1,
+        "trial": trial,
+        "signal": signal,
+        "dedup": dedup,
+        "pass": all_pass,
+        "feedback": (signal["redo_feedback"] + " | "
+                     + dedup["redo_feedback"]) if not all_pass else "全过",
+    })
+
+    if all_pass:
+        print(f"[opening loop] attempt {attempt+1}/3 通过")
+        break
+    else:
+        print(f"[opening loop] attempt {attempt+1}/3 未过:")
+        print(f"  - signal: {signal['redo_feedback']}")
+        print(f"  - dedup:  {dedup['redo_feedback']}")
+        if attempt == 2:
+            print(f"[opening loop] 3 次达到上限,用最后一次试稿继续(用户原话锁定)")
+            # 不 abort,继续走
+
+accepted_trial = opening_loop_history[-1]["trial"]
+# 把 opening_loop_history 写到 run log
+```
+
+**3 关详解**(Musk × Jobs 共识):
+
+| 关 | 内容 | 阈值 | 来源 |
+|---|---|---|---|
+| **L2-a 物理约束** | 首段(intro 块到 H2 前)≥ 50 字 + 第一人称密度 ≥ 5/千字 | PHASE1 跨 4 账号同向唯一真规律 + TOP 5% 爆款 +12.5pp 实测 | `opening_signal.check_physical_constraints` |
+| **L2-b 4 维信号** | 具体性 / 反差感 / 情绪锚点 / 信息密度,每维 ≥ 6/10 | Musk 第一性原理(物理目的=读者 0.5s 决定继续滑) | `opening_signal._score_*` |
+| **L2-c 近期开头去重** | 跟最近 5 篇 ship 过开头 token Jaccard ≤ 0.30 **且** 5-gram 重叠 ≤ 0.20 | Jobs syntactic 反复读检测(用户 2026-05-24 强调) | `opening_dedup.check_opening_overlap` |
+
+**关键设计原则**:
+1. 任一关不过 → redo(把 redo_feedback 反馈给 writer 让它知道改啥)
+2. 上限 3 次(用户原话「上限三次,还没达到标准就直接用最后一次的就行」)
+3. 3 次都没全过 → 不 abort,**用最后一次继续**(避免阻塞主流程)
+4. 全程 history 写 run log,数据飞轮回填(将来 train signal 阈值)
+
+##### Step 1.5 完整流程(harness 循环 + dogfood gate)
+
+1. invoke `fengyun-writer` skill **试稿模式**(只出 200 字开头,不出完整稿):
+
+```
+用 fengyun-writer 试稿:基于「<北极星填空>」+「<核心事件>」,
+出 200 字开头(不出完整稿)。
+风格遵循 voice-dna.md + corpus/growth/ 抽 3-5 篇感受语调。
+
+【Round 13 新增 — opening loop avoidance】
+如果是 retry(attempt > 0),writer 必须避免上次的 redo_feedback:
+  上次反馈: <opening_loop_history[-1]["feedback"]>
+  本次必须解决: 上面提到的具体维度
+```
+
+2. **开头 harness 循环**(L2 评估 + L3 retry,见上节伪代码)— 上限 3 次
+
+3. **调 content-judge skill D-1 代答(Round 9 NORTH_STAR 红线)**:
+
+```
+用 content-judge skill D-1 dogfood gate 判断:
+输入 = 200 字试稿全文
+输出 = {verdict: y|n, confidence: 0-1, reason: "...", degraded: bool, voice_5dim: {...}}
+
+D-1 跑 voice-dna 5 分量(语调/共情/Vision/典故/底色) + R18 硬否决预检
+置信度公式:
+  5/5 过 → 0.9 y
+  4/5 过 → 0.75 y
+  3/5 过 → 0.55 → fallback
+  R18 命中 → 1.0 n
+```
+
+3. 行为按 D-1 输出走:
+   - `verdict=y` 且 `confidence ≥ 0.7` → **自动进 Step 2 调研**(不打扰风云,M4 红线)
+   - `verdict=n` 且 `confidence ≥ 0.7` → **自动重跑 fengyun-writer 试稿**(不消耗 Step 6.5 改稿额度);最多重跑 2 次,2 次还 n → 中止主流程,提示风云这个主题可能不适合用本人 voice
+   - `degraded=true` (confidence < 0.7) → 按 content-judge Part 3 fallback 协议 print 5 分量矩阵 + 试稿全文 + 历史快照给风云,自动 degraded continue
+   - R18 命中 → 不重跑,直接中止 + 标记 `R18 pre-trigger`,人工修主题
+
+4. **数据飞轮 v1 自动 log(M7 落地)**:把 D-1 verdict 写一行到 `~/.claude/skills/content-judge/data/founder_feedback.jsonl`:
+   ```jsonl
+   {"ts":"<ISO>","decision_type":"D1","slug":"<slug>","draft_path":"<trial path>","verdict":"y|n","confidence":<float>,"degraded":<bool>,"voice_5dim":{"tone":"y/n","empathy":"y/n","vision":"y/n","typology":"y/n","baseline":"y/n"},"fengyun_actual_verdict":null,"matched":null,"note":""}
+   ```
+   写入失败(IO 错误) → log warning,**不阻塞主流程**
+
+5. 把 dogfood verdict 记到 `output/runs/YYYYMMDD-<slug>.json` 的 `dogfood_gate` 字段:
+   `{first_pass: y/n, retries: 0-2, final: y/n, confidence: <float>, source: "content-judge D-1" | "human fallback", complaints: ["..."]}`
+
+#### 为什么必跑
+
+Round 7 Musk × Jobs 共识:**风云不读自己的草稿就推出去 = 反 dogfood**。fengyun-writer 蒸馏自 57 篇语料,但**没有「风云本人确认蒸馏对不对」的 ritual**,把关就成了走过场。Step 1.5 把这个 ritual 强制化,让 voice drift 在 200 字开头就被截住,**不等 4000 字写完再发现**。
+
+#### 跟 Step 6.5 改稿循环的关系
+
+Step 1.5 dogfood gate **不消耗** Step 6.5 的 3 轮改稿配额(还没出完整稿,只是开头试稿)。Step 6.5 改稿循环留给真正的 critic 反馈(三轨 vote 出来后)。
+
+#### 失败回退
+
+- fengyun-writer skill 不存在 / 试稿失败 → 跳过 Step 1.5,记 `degraded.dogfood = "writer skill missing / writer fail"`,继续 Step 2,但 run log 标记此次 ship 没过 dogfood
+- **content-judge skill 不存在** → 回退到旧版「自动 degraded continue(不打扰用户)」流程,记 `degraded.dogfood_decision = "content-judge skill missing, auto-continue"`
+
+### Step 2 · ITI I-2 深搜调研(Round 12 升级 2026-05-24)
+
+**ITI 架构第三段 Information(深搜)**:基于已选定的 slug + entities,反向激活相关搜索源。
+
+**重要(用户原话 2026-05-24)**:「**两个 I 都要用上 WebSearch**」 — Claude Code 自带 WebSearch 在 I-2 必跑,补 Python 脚本拉不到的源。
+
+不许凭空写,**事实 = 出处**(MEMORY 中的 `feedback_no_speculation.md` P0 铁律)。**ITI I-2 调用模式**:
+
+```python
+from tools.iti_explore import explore_topic, merge_with_websearch
+
+# 1. 主线程必跑 WebSearch 中英文(I-2 不能漏):
+ws_items = []
+# 中文 query - 至少 2 次
+ws_items.extend(websearch_normalize(WebSearch(f"{title} 中文 最新")))
+ws_items.extend(websearch_normalize(WebSearch(f"{title} 影响 分析")))
+# 英文 query - 至少 2 次
+ws_items.extend(websearch_normalize(WebSearch(f"{title_en} latest analysis")))
+ws_items.extend(websearch_normalize(WebSearch(f"{entities[0]} {entities[1]} news")))
+
+main_urls = [item["url"] for item in ws_items[:4]]  # top 4 url 给 safe_webfetch
+
+# 脚本 helper 负责的部分(本地 + API):
+local_result = explore_topic(
+    slug="anthropic-300b-overtake-openai",
+    title="9000 亿的牌局",
+    entities=["Anthropic", "OpenAI", "融资", "估值"],
+    main_source_urls=main_urls,  # 主线程提供主源 URL
+)
+# local_result["facts"] = 5 个本地+API 源拉到的事实:
+#   - we-mp-rss 同主题历史文章
+#   - corpus grep 4 对标号同主题
+#   - arxiv 主题搜索
+#   - topic_hotness 历史数据点
+#   - safe_webfetch 反爬主源
+
+# 合并 WebSearch + local facts → research.md(目标 15-25 条)
+final_facts = merge_with_websearch(local_result["facts"], ws_items, max_total=25)
+```
+
+并发派下面这些工具,聚合到 `output/research/YYYYMMDD-<slug>.md`:
+
+- **WebSearch**:主题相关最近 7 天英文 / 中文新闻
+- **WebFetch**:核心事件源(官方 blog / paper / GitHub release)2-3 个 URL
+- **aihot skill**:本周 AI 圈相关动态(查重 + 角度参考)
+- **(可选)hv-analysis skill**:如果是产品/公司/概念主题,跑横纵分析法
+- **(可选)corpus 检索**:在 `D:\Dev\ai-wechat-pipeline\corpus\` 里 grep 主题,看 4 个对标号写过没
+
+输出 `output/research/YYYYMMDD-<slug>.md` 包含:
+- 北极星填空(从 Step 1)
+- 核心事件 3 句话摘要
+- 5-10 条带 URL 的事实清单
+- 3-5 条「我的角度可以是 ___」候选
+
+### Step 3 · 写初稿
+
+调 **fengyun-writer** skill(默认):
+- 触发语:`用 fengyun-writer 写一篇关于 <主题> 的草稿,北极星是「<填空>」,事实清单见 output/research/YYYYMMDD-<slug>.md`
+- 让 fengyun-writer 自己跑它的 Step -1 / 0 / 1 / 2 / 3 流程
+- 输出落到 `output/drafts/YYYYMMDD-<slug>-v0.md`,frontmatter 必带 `title / digest / author: 研究Agent的云`
+
+**⛔ Round 22 P0-6 fake-pass 防伪铁律**:
+- frontmatter `writer_pass: true` 时,**必须**同时写 `writer_real_run: true` + `writer_source: "fengyun-writer skill v1, round=1, 4200 字"`
+- gate.py 看到 `writer_pass: true` 但缺这两个字段 → 当场阻断 ship
+- 主线程绝对不许「拍脑袋自己扮 writer 写完直接标 pass」— 必须真 invoke fengyun-writer skill
+
+##### → 立即写入 frontmatter(Step 3 完成后,不许攒到最后)
+
+```yaml
+writer_pass: true
+writer_real_run: true
+writer_source: "fengyun-writer skill v1, round=1, 4200 字"
+```
+
+3 个字段,一个都不能少。写完才进 Step 3.3。
+
+例外:用户**明确说「卡兹克风格」/「System A 风格」**才换 `khazix-writer` 或 `wechat-ai-pubaccount-writer`,并把后续 critic 切到 System A 单轨(见 Step 6 降级表)。
+
+### Step 3.3 · 标题 harness 循环(Round 16 新增,2026-05-25)
+
+**用户原话(2026-05-25)**:「就做标题党 — PHASE1 数据有规律可以直接用 — title harness 是必要的」
+
+**问题根因**:最近 ship 文章都是 AI 系统产出,「风云碰巧做对了」≠「风云本人判断力」。AI 系统当前没有标题硬约束,**6 篇 ship 真稿在 PHASE1 标题规律上只有 1/6 pass**(详见 `reports/title_hook_formulas.md` 78 篇双高数据)。下一次 AI 产出可能就翻车 — 必须 lock 数据规律。
+
+**用户 Q1 拍板:A. lock PHASE1 数据规律,强制改成 20+ 字命中钩子**(2026-05-25)
+
+##### Step 3.3 完整流程(harness 循环)
+
+```python
+from tools.title_signal import score_title
+from tools.title_dedup import check_title_overlap
+
+MAX_TITLE_RETRIES = 3
+title = draft_frontmatter["title"]
+
+for attempt in range(MAX_TITLE_RETRIES + 1):
+    # L1 signal 评分(PHASE1 实证 6 维度)
+    signal = score_title(
+        title,
+        topic_keywords=entities,            # Step 2 ITI 出的实体
+        body_chars=len(draft_body_text),
+    )
+    # L2 dedup 评分(14 天回看 + 7 天钩子撞型)
+    # Bug 4 修复(2026-05-25 Round 17):传 current_draft_path 排除自身
+    #   Step 3 已写完整稿 draft_path 存在于 output/drafts/,
+    #   不传会导致 self-match Jaccard=1.0 必然撞型。
+    dedup = check_title_overlap(
+        title,
+        hook_type=signal.get("hook_type"),
+        max_age_days=14,
+        max_n_check=10,
+        current_draft_path=draft_path,
+    )
+
+    pass_signal = signal["verdict"] == "pass"
+    pass_dedup = not dedup["is_too_similar"]
+
+    if pass_signal and pass_dedup:
+        print(f"✅ 标题 harness 通过(attempt {attempt + 1})")
+        break
+
+    if attempt >= MAX_TITLE_RETRIES:
+        print(f"⚠️  上限到达,使用最后一版标题(用户原话:上限 3 次不达标就用最后一版)")
+        break
+
+    # 反馈给 writer 改标题(只改 frontmatter title,不改正文)
+    feedback = " | ".join(filter(None, [signal["redo_feedback"], dedup["redo_feedback"]]))
+    new_title = invoke_writer_change_title(
+        draft_path=draft_path,
+        old_title=title,
+        feedback=feedback,
+    )
+    # writer 出的新标题写回 frontmatter
+    update_frontmatter_title(draft_path, new_title)
+    title = new_title
+```
+
+##### 评分维度(全部 PHASE1 实证,反 p-hacking 合规)
+
+| 维度 | 阈值 | 出处 |
+|---|---|---|
+| 字数 ∈ [20, 40] | < 20 字小样本陷阱 | PHASE1_FACTS line 810 |
+| 数字组数 ≤ 1 | 双高 0.36 vs 假爆款 0.70 | line 302 / 423 |
+| 品牌词白名单(主题相关时必上)| Anthropic / Claude / Skills / Claude Code | line 691-698 |
+| 品牌词黑名单不上 | OpenAI / GPT / Veo / GLM 已脱热 | line 698(-9.3pp)|
+| 命中 7 钩子之一 | 颠覆认知 / 实用指南 / 热点事件 / 人物故事 / 思维比喻 / 深度拆解 / 未来预言 | `reports/title_hook_formulas.md` 78 篇 LLM 提取 |
+| 4 共同特质 ≥ 2/4 | 反常规认知 / 强行动指令 / 高信息密度 / 情绪化表达 | 同上 |
+| 致命组合 | 英文 < 8 + tb_ratio > 0.03 = 4.16× 扑街 | line 836-848 |
+| token Jaccard ≤ 0.40 | 跟近 14 天 ship 标题 | 镜像 opening_dedup |
+| 5-gram 重叠 ≤ 0.25 | 同上 | 同上 |
+| 钩子类型 7 天内 ≤ 1 次 | 防钩子连续撞 | 自加 |
+
+##### 关键设计原则(跟 opening/ending harness 一致)
+
+- **上限 3 次**:不达标就用最后一版(用户原话 2026-05-24)
+- **只改标题不改正文**:writer 接 frontmatter title 改的 prompt,不重写 4000 字正文
+- **跑在 Step 3 之后 / Step 3.5 ending 之前**:因为标题决定后,封面 routing(Step 7)依赖标题 + 前 500 字
+- **失败回退**:`title_signal` / `title_dedup` 跑挂 → 跳过 Step 3.3,记 `degraded.title_harness = "module fail"`,不阻断 ship
+
+##### → 立即写入 frontmatter(Step 3.3 完成后)
+
+```yaml
+title_pass: true
+title_real_run: true
+title_source: "title_signal hook_type=X, score_title N/10, dedup Jaccard=0.XX"
+```
+
+写完才进 Step 3.5。
+
+### Step 3.5 · 结尾 harness 循环(Round 14 新增,2026-05-24)
+
+**问题根因**:最近几篇结尾同质化(「不是 X 是 Y / 引古典 / 愿你也能 + 颜文字」公式重复)。
+
+**数据驱动锁定**(跟开头不同,**结尾有 4 个 PHASE1 真信号**):
+- `b_last_para_chars` 跨 4 账号 ρ=+0.300 4/4 显著
+- `viral_design_composite` ρ=+0.226 4/4 显著
+- `viral_sharing_addr` ρ=+0.215 4/4 显著
+- `viral_ending_strength` ρ=+0.201 3/4 显著
+- TOP 5% 爆款 vs 扑街 8 个 STRONG 差异维度(末段字数 +143% / aphorism +213% / imperative +49% / summary +108%)
+
+**解法**:跟开头镜像设计 — **3 关 + 上限 3 次 harness 循环**:
+
+```python
+from tools.ending_signal import score_ending_signal
+from tools.ending_dedup import check_ending_overlap
+
+ending_loop_history = []
+draft_path = Path("output/drafts/YYYYMMDD-<slug>-v0.md")
+
+for attempt in range(3):  # 上限 3 次
+    # ────── L1 写 / 改末段 ──────
+    # 第 1 次:Step 3 已写完整稿,直接评
+    # 第 2/3 次:调 fengyun-writer 改末段(只改最后 ## 章节,不重写全文)
+    if attempt > 0:
+        prev_feedback = ending_loop_history[-1]["feedback"]
+        # invoke fengyun-writer revise mode:只改末段,基于 prev_feedback
+        revise_ending_section(draft_path, prev_feedback)
+
+    article = draft_path.read_text(encoding="utf-8")
+
+    # ────── L2 评(3 关)──────
+    signal = score_ending_signal(article)  # 物理 + 4 维(数据驱动)
+    # Bug 4 修复(2026-05-25 Round 17):传 current_draft_path 排除自身
+    dedup = check_ending_overlap(
+        article, max_age_days=30, max_n_check=5,
+        current_draft_path=draft_path,
+    )
+
+    all_pass = (signal["verdict"] == "pass"
+                and signal["physical_pass"]
+                and not dedup["is_too_similar"])
+
+    ending_loop_history.append({
+        "attempt": attempt + 1,
+        "signal": signal,
+        "dedup": dedup,
+        "pass": all_pass,
+        "feedback": (signal["redo_feedback"] + " | " + dedup["redo_feedback"])
+                    if not all_pass else "全过",
+    })
+
+    if all_pass:
+        print(f"[ending loop] attempt {attempt+1}/3 通过")
+        break
+    else:
+        print(f"[ending loop] attempt {attempt+1}/3 未过:")
+        print(f"  - signal: {signal['redo_feedback']}")
+        print(f"  - dedup:  {dedup['redo_feedback']}")
+        if attempt == 2:
+            print(f"[ending loop] 3 次达到上限,用最后一次结尾继续(用户原话锁定)")
+```
+
+**3 关详解**(数据驱动,跟开头方法论同源):
+
+| 关 | 内容 | 阈值来源 |
+|---|---|---|
+| **L2-a 物理约束** | 末段(最后 H2 之后所有段)≥ 150 字 | PHASE1 `b_last_para_chars` 跨 4 账号 ρ=+0.300 4/4 显著(对风云 voice 友好的保守阈值) |
+| **L2-b 4 维信号** | 金句密度 / 摘要密度 / 召唤密度,每维 ≥ 6/10 | viral_design_features 跨 4 账号验证,TOP 爆款 vs 扑街 STRONG 差异维度 |
+| **L2-c 近期结尾去重** | token Jaccard ≤ 0.30 + 5-gram ≤ 0.20 | Jobs syntactic(跟 opening_dedup 镜像) |
+
+**写在 Step 4 lint 之前**:
+- Step 3 完整稿写完 → Step 3.5 ending harness(改的是末段不是全文)→ Step 4 lint
+- 改末段不破坏物理约束(只动「## 收束」/「## 收尾」段内容,不动其它章节)
+
+##### 关键设计原则(跟 opening harness 一致)
+
+1. **改末段不改全文**:retry 时让 writer 只改最后一个 H2 之后的内容,**不动主体论证**
+2. **上限 3 次**(用户锁定,跟 opening 一致)
+3. **3 次不过用最后一次**(避免阻塞主流程,Real Artists Ship)
+4. **history 写 run log**(数据飞轮回填将来校准阈值)
+
+##### → 立即写入 frontmatter(Step 3.5 完成后)
+
+```yaml
+ending_pass: true
+ending_real_run: true
+ending_source: "ending_signal score_ending N/10, dedup Jaccard=0.XX"
+```
+
+写完才进 Step 4。
+
+### Step 4 · 机械 lint(必跑直到 0 violation)
+
+```
+python tools/fengyun_lint.py output/drafts/YYYYMMDD-<slug>-v0.md
+```
+
+读 JSON 输出 `output/drafts/YYYYMMDD-<slug>-v0.lint.json`,按规则处理:
+
+| violation | 修复方式 |
+|---|---|
+| **R0_halfwidth_punctuation** | 直接跑 `python tools/fix_punctuation.py <draft>`,会半角→全角并写回原文件 |
+| **R12_word_count_too_short**(<4000 字)| 回 Step 3 让 fengyun-writer 扩写,扩到 ≥ 4000 |
+| **R12_word_count_too_long**(>5000 字)| 让 fengyun-writer 精简(优先砍重复论证 / 段尾悬空) |
+| **R1_brackets / R3_excl / R4_dash / R5_buzzwords / R6_kazik / R7_ai_markers / R8_anxiety / R17_english_like** | 用 Edit 工具按 lint 给的 fix 字段逐条改 |
+| **R10_no_chapters**(无 H2/H3)| Edit 加 3-5 个章节标题 |
+| **R11_too_fragmented / R13/R14/R16** | 回 fengyun-writer 改稿,告诉它 lint 报告 |
+| **R18_P0_self_as_ai** ⛔(明确自指 AI 身份)| **必须删或重写命中段**。critic_vote 会判 `aborted_r18`,跳过所有兜底强制人工。回 fengyun-writer 改稿,把 lint matches 字段里的具体 ctx 给它 |
+| **R18_P1_architecture_leak** ⚠️(架构 / skill / 工具栈暴露)| 不阻断 ship 但 writer 必须改。回 fengyun-writer 改稿。`r18_dashboard.py` 周报会告警是否需修 L1 writer |
+| **R18_P2_automation_leak** 💭(自动化流程暴露)| 改稿删自动化提及。`r18_dashboard.py` 计入触发率统计 |
+
+改完**重跑 lint**,循环到 `n_violations == 0`。改稿超过 3 轮还过不了 → 中止,给风云人工 review。
+
+##### → 立即写入 frontmatter(Step 4 完成后)
+
+```yaml
+lint_pass: true
+# 或如果走了 partial_pass 兜底:
+# lint_partial_pass: true
+```
+
+1 个字段。写完才进 Step 4.5。
+
+### Step 4.5 · humanizer-zh 去 AI 味(Round 7 P0,2026-05-24)
+
+⛔ **必跑,不许跳过**。fengyun_lint 0 violations 之后,Step 5 王小波语感预审之前。
+
+#### 调用方式
+
+invoke `humanizer-zh` skill,把当前 draft 喂进去:
+
+```
+用 humanizer-zh 处理 output/drafts/YYYYMMDD-<slug>-v0.md,
+按内置 24 条 AI 写作模式检测 + 自动修复:
+- 美式破折号过度
+- 三段式结构(rule of three)
+- 「与此同时 / 至关重要 / 深入探讨」AI 词汇
+- 被动语态堆砌
+- 模糊归因(「研究表明 / 业界认为」)
+- 否定式排比
+- 填充词短语
+- 等
+```
+
+修改完成后**重跑 fengyun_lint**(确认 humanizer 改稿没引入新 violation,如 R0 全角标点 / R17 翻译腔)。
+
+**⛔ Round 21 P0-9 fake-pass 防伪铁律**:
+- frontmatter `humanizer_pass: true` 时,**必须**同时写 `humanizer_real_run: true` + `humanizer_source: "humanizer-zh skill v1, applied N changes"`
+- gate.py 看到 `humanizer_pass: true` 但缺这两个字段 → 当场阻断 ship
+- 主线程不许「读了一遍觉得 OK 直接标 pass」— 必须真 invoke humanizer-zh skill
+
+#### 为什么必跑
+
+Round 7 Musk × Jobs 共识:**humanizer-zh 是 critic 缺的一只眼**。当前 fengyun_lint R5/R6/R7 抓 AI 圈套话 + 卡兹克口头禅 + 部分 AI 写作标记词,但 humanizer-zh 的 24 条 Wikipedia「AI 写作特征」模式更全面。
+
+预期效果:每篇 AI 味降 ≥ 30%(humanizer-zh 自检 metric)。
+
+#### 失败回退
+
+- humanizer-zh skill **不存在**(invoke 报 "skill not found" / 文件 404)→ 跳过 Step 4.5,记 `degraded.humanizer = "skill_missing"`,继续 Step 5。
+- humanizer-zh skill **存在但执行出错**(timeout / crash / 返回异常)→ 标记 `degraded.humanizer = "invoke_error:<reason>"` 但**仍然继续 Step 5**,不阻断。
+- ⛔ **不许因为「测试简化」/「省时间」/「觉得没必要」跳过**。只有真不存在或真报错才允许 skip。
+
+##### → 立即写入 frontmatter(Step 4.5 完成后)
+
+```yaml
+humanizer_pass: true
+humanizer_real_run: true
+humanizer_source: "humanizer-zh skill v1, applied N changes"
+```
+
+3 个字段。只有 humanizer-zh 真跑了才写 `humanizer_pass: true`。写完才进 Step 5。
+
+### Step 5 · 语感预审(王小波 perspective)
+
+invoke `wangxiaobo-perspective` skill,把当前 draft 喂进去:
+
+```
+用 wangxiaobo-perspective 审视 output/drafts/YYYYMMDD-<slug>-v0.md,
+重点找翻译腔 / 英式中文 / 「不是想出来的是翻译过来的」表达。
+输出每条带:位置 + 母语建议。
+```
+
+应用王小波给的建议(Edit),改完**重跑 fengyun_lint 确认没破坏其他规则**。
+
+**⛔ Round 21 P0-9 fake-pass 防伪铁律**:
+- frontmatter `wangxiaobo_pass: true` 时,**必须**同时写 `wangxiaobo_real_run: true` + `wangxiaobo_source: "wangxiaobo-perspective skill, found N translation-tone hits"`
+- gate.py 看到 `wangxiaobo_pass: true` 但缺这两个字段 → 当场阻断 ship
+- 主线程不许「自己读一遍觉得没翻译腔直接标 pass」— 必须真 invoke wangxiaobo-perspective skill
+
+#### 失败回退
+
+- wangxiaobo-perspective skill **不存在**(invoke 报 "skill not found" / 文件 404)→ 跳过 Step 5,记 `degraded.wangxiaobo = "skill_missing"`,继续 Step 6。
+- wangxiaobo-perspective skill **存在但执行出错**(timeout / crash / 返回异常)→ 标记 `degraded.wangxiaobo = "invoke_error:<reason>"` 但**仍然继续 Step 6**,不阻断。
+- ⛔ **不许因为「测试简化」/「省时间」/「觉得没必要」跳过**。只有真不存在或真报错才允许 skip。
+
+##### → 立即写入 frontmatter(Step 5 完成后)
+
+```yaml
+wangxiaobo_pass: true
+wangxiaobo_real_run: true
+wangxiaobo_source: "wangxiaobo-perspective skill, found N translation-tone hits"
+```
+
+3 个字段。只有王小波真跑了才写 `wangxiaobo_pass: true`。写完才进 Step 6。
+
+### Step 6 · critic 三轨 vote
+
+三轨并行调用,任何一轨拿不到都按降级表降级。
+
+**⛔ Round 18 P0-1 fake-pass 防伪铁律(critic_vote_pass=true 时必查):**
+- `critic_a_real_run: true` + `critic_a_score: <真分数>` — 必须真跑 `score_draft.py`
+- `critic_b_real_run: true` + `critic_b_source: "huashu-perspective skill, ship verdict, ..."` — 必须真 invoke huashu-perspective skill
+- `critic_c_real_run: true` + `critic_c_source: "content-judge skill, 挂名意愿 yes, ..."` — 必须真 invoke **content-judge** skill(Round 9 蒸馏的风云本人 decision-time skill,不是 fengyun-writer critic_mode)
+- gate.py 任一缺失 → 当场阻断 ship
+- **审计实证**(2026-05-25 trapdoor 文):主线程之前的三轨 verdict 都是「拍脑袋写 ship 没真调 skill」,Round 18 防伪上线后当场抓出
+
+#### Track A · critic v2.1(数字分)— 必跑
+
+```
+python tools/score_draft.py output/drafts/YYYYMMDD-<slug>-v0.md
+```
+
+输出 read / share / like 三维 + total_v21 综合分。
+
+阈值:**综合分 ≥ 60 视为 A 轨通过**(System A 锁定 baseline,sop_v2.py share R²=0.323)。
+
+#### Track B · huashu-perspective(emotion-judgement,binary)
+
+- 若 `C:\Users\23303\.claude\skills\huashu-perspective\SKILL.md` **存在**:
+  ```
+  用 huashu-perspective 评 output/drafts/YYYYMMDD-<slug>-v0.md,
+  输出:ship / 不 ship 的 binary 判断 + 「哪一段没灵魂」具体位置(一段一句话)。
+  不要给数字,只要 binary + 原因。
+  ```
+- 若不存在 → **B 轨缺席**,记 `degraded.B = "skill not installed"`
+
+#### Track C · content-judge skill(founder voice,binary)— Round 9 蒸馏 + Round 18 lock
+
+- **主路径**:`~/.claude/skills/content-judge/SKILL.md`(2026-05-24 蒸馏,decision-time perspective skill)
+  ```
+  用 content-judge 评 output/drafts/YYYYMMDD-<slug>-v0.md,
+  输出:风云愿不愿意挂名(binary,yes / no) + 改稿点(具体到段落)。
+  ```
+- **降级路径**:若 content-judge 不存在 → 回 `~/.claude/skills/fengyun-writer/references/critic_mode.md`
+- 都不存在 → **C 轨缺席**,记 `degraded.C = "content-judge missing"`
+
+**content-judge 是什么**:Round 9 用 huashu-nuwa 蒸馏的风云本人 decision-time skill,5 个 decision_mode 工作流(D-1 ~ D-5)替风云在 ship pipeline 各 gate 自动回答(dogfood / human_gate / typography / 改稿方向 / 选题胆量)。Critic mode 是其中 D-2 / D-4 的副产物。
+
+#### 投票规则(总闸)
+
+把三轨结果丢给 `tools/critic_vote.py`(或 Claude 自己按下表判):
+
+| A(≥60)| B(ship)| C(挂名)| 决议 |
+|---|---|---|---|
+| ✅ | ✅ | ✅ | **进 Step 7**(全票通过)|
+| ✅ | ✅ | ❌ | **进 Step 7**(A + 至少 1 个 binary 同意,达标)|
+| ✅ | ❌ | ✅ | **进 Step 7**(同上)|
+| ✅ | ❌ | ❌ | **回 Step 3 改稿**(A 单轨过但 B/C 都否) |
+| ❌ | ✅ | ✅ | **回 Step 3 改稿**(A 没过) |
+| ❌ | * | * | **回 Step 3 改稿**(A 是底线) |
+
+降级模式:
+
+| 缺失轨 | 决议规则 |
+|---|---|
+| 只 B 缺 | A ≥ 60 **且** C 挂名 → 进 Step 7;否则改稿 |
+| 只 C 缺 | A ≥ 60 **且** B ship → 进 Step 7;否则改稿 |
+| B 和 C 都缺 | A 单轨,**A ≥ 60 即放行**(等同 System A 模式) |
+| A 缺(脚本报错)| 中止,提示风云人工修工具 |
+
+每轮改稿最多 **3 轮**。3 轮还过不了 → 走 **Step 6.5.8 human_gate**(系统停止,日志推荐 A 分最高版本,风云人工挑/改/弃),不再无脑自动 ship,也不再无脑甩人工。
+
+⛔ **例外硬否决**:任何一轮 lint 命中 **R18-P0(明确自指 AI 身份)**→ 立即 `aborted_r18`,**跳过所有兜底**,人工介入修 P0 段才能继续。R18-P1 / P2 不阻断 ship,按 revise 正常走 gate tree。
+
+> ⛔ **不许直接停在「revise」决议上**。投票判定 `revise` 必须进 Step 6.5 跑改稿循环,不许把 critic 的「不 ship」当作终态。这是 harness 的灵魂 —— retry loop。审判官警告:agent 跑到 critic 不 ship 直接停 = 偷懒,不叫全自动。
+
+##### → 立即写入 frontmatter(Step 6 投票完成后)
+
+```yaml
+# A 轨
+critic_a_real_run: true
+critic_a_score: 72.3
+
+# B 轨
+critic_b_real_run: true
+critic_b_source: "huashu-perspective skill, ship verdict, 第3段emotion_missing"
+
+# C 轨
+critic_c_real_run: true
+critic_c_source: "content-judge skill, 挂名意愿 yes, 改稿点: 第5段voice_drift"
+
+# 投票结果(根据 gate_tree 决议写一个)
+critic_vote_pass: true
+# 或: revise_loop_pass: true
+# 或: auto_partial_pass: true
+# 或: auto_abort: true
+```
+
+7 个字段(3 轨各 2 + 决议 1)。写完才进 Step 6.5 或 Step 7。
+
+### Step 6.5 · critic-revise loop ⛔ BLOCKING(改稿循环)
+
+**触发条件**:Step 6 投票规则判定「**回 Step 3 改稿**」(decision = `revise`)。
+**这是 harness 的灵魂**,不许跳过、不许偷懒、不许把 critic 反馈丢掉直接停。
+
+> **注意**:「回 Step 3」是投票表里的措辞,实际执行走的是本 Step 6.5 子循环——**不是完全重写全文**,不是从 Step 3 重头来。6.5 是嵌在 Step 6 和 Step 7 之间的局部修复子循环,只改 critic 指出的段落(±10%),然后走精简版 4→5→6,再投票。外层流程不回头。
+
+执行流程必须**严格按这个 7 步序列**,不许跳过任何一步:
+
+#### 6.5.1 · 收集三轨 critic 的具体改稿点
+
+| 轨 | 收集什么 |
+|---|---|
+| **A 轨**(critic v2.1) | read / share / like 三维各自最低的维度 + sop_v2_1 触发的扣分规则(从 `score_draft.py` 输出的 reasons / penalty 字段抓) |
+| **B 轨**(huashu)| 「不 ship」对应的具体段落编号 + 原因类型:`voice_drift / 缺_lived_stake / 鸡汤 / emotion_missing / 选题胆量不足` |
+| **C 轨**(fengyun critic_mode)| 「不挂名」对应的具体段落 + 改稿建议(必须落到段落,不许说"整体感觉") |
+
+任一轨缺席(skip / degraded)→ 该轨跳过收集,不视为 fail。
+
+#### 6.5.2 · 拼 revise_brief.md 喂给 fengyun-writer
+
+**文件位置**:`output/drafts/<slug>-revise-brief-r{N}.md`(N = 改稿轮次,r1 / r2)
+
+**必含字段**:
+
+```markdown
+# Revise Brief · {slug} · Round {N}
+*生成时间:{ts} · 自动 by fengyun-publish Step 6.5*
+
+## 当前 draft
+{当前 draft 路径,如 output/drafts/<slug>-v{N-1}.md}
+
+## 三轨 verdict 原文
+### A 轨 (critic v2.1)
+total={x} read={r} share={s} like={l}
+最弱维度:{worst}
+扣分规则:{penalty_rules}
+
+### B 轨 (huashu)
+verdict: 不 ship
+具体段落 + 原因:
+- 第 X 段: {段落引文} → {原因类型}
+- ...
+
+### C 轨 (fengyun critic_mode)
+verdict: 不挂名
+具体段落 + 改稿建议:
+- 第 X 段: {段落引文} → {建议}
+- ...
+
+## 优先修复点(merge 三轨 top 3)
+1. {段落} : {改稿动作}
+2. ...
+3. ...
+
+## 改稿硬约束(⛔ writer 必读)
+1. **总字数变动 ≤ ±10%**(原文 X 字 → 目标区间 [X*0.9, X*1.1])。避免大改重写丢 voice
+2. **必须保留**原有北极星(`{北极星}`)+ 章节结构(章节标题不许改)
+3. **只针对 critic 指出的具体段落改**,其它段落不动
+4. **改稿动作类型**(按 critic 反馈选):加 lived stake(作者第一人称体验)/ 删鸡汤 / 补 emotion / 补 stake / 补押注表态
+5. **voice 一致性**:fengyun-writer Step 0(voice-dna.md)必读不跳过
+```
+
+#### 6.5.3 · 调用 fengyun-writer skill 改稿模式
+
+**触发语**(必须按这个格式写,fengyun-writer 才会进改稿模式而不是从头写):
+
+```
+用 fengyun-writer 按 output/drafts/<slug>-revise-brief-r{N}.md 改稿,
+输入 draft = output/drafts/<slug>-v{N-1}.md,
+输出 draft = output/drafts/<slug>-v{N}.md。
+
+约束:
+- 不重新写,只针对 revise_brief.md「优先修复点」列出的段落改
+- 总字数变动 ≤ ±10%
+- 章节结构 + 北极星 + 标题不许改
+- 保留 voice 一致性(Step 0 必读)
+```
+
+fengyun-writer 改完输出新 draft v{N}。
+
+#### 6.5.4 · 改完立刻回 Step 4 lint(必须 0 violation)
+
+```
+python tools/fengyun_lint.py output/drafts/<slug>-v{N}.md
+```
+
+有 violation → 按 Step 4 表修,改完重跑直到 0。
+
+#### 6.5.5 · 回 Step 5 王小波语感预审
+
+invoke `wangxiaobo-perspective`,确认改稿没引入新的翻译腔。
+
+**跑/跳条件**:
+- 改稿有**新增文字 ≥ 50 字** → **必跑**(填补段落最容易产生翻译腔)
+- 纯删减改稿(只删句子,新增文字 < 50 字) → 可跳过,记 `run log` 的 `degraded` 字段:`wangxiaobo = "skipped: pure deletion"`
+
+#### 6.5.6 · 回 Step 6 重跑三轨 critic
+
+| 轨 | 命令 |
+|---|---|
+| A | `python tools/score_draft.py output/drafts/<slug>-v{N}.md` |
+| B | invoke `huashu-perspective` 评新 draft |
+| C | invoke `fengyun-writer critic_mode` 评新 draft |
+
+跑完拿到三个新 verdict。
+
+#### 6.5.7 · 门控树投票(Musk × Jobs Round 2 共识,2026-05-23)
+
+**废弃** `A + 10×B + 10×C` 数值公式(Round 2 元辩论结论:「灵魂问题不该是数学题」)。**改为结构化门控树**(critic_vote.py 的 `gate_tree` 函数):
+
+| 条件 | 决议 | 动作 |
+|---|---|---|
+| A 缺(脚本报错) | `abort` | 中止,跑 score_draft.py 看报错修工具链 |
+| A 没过线(< 60) | `revise` | 回 Step 6.5 改稿 |
+| **C reject**(founder 不挂名) | `revise` | ⛔ C 硬否决,founder verdict 优先于 A 数字 + B 外部 critic |
+| C ship/skip + B ship | `ship` | 进 Step 7(封面) |
+| C ship/skip + B reject | `human_gate` | ⛔ 进 Step 6.5.8(风云自动出口) |
+| B skip + C skip | `ship` | A 单轨过线即过(System A 兼容模式) |
+| + revise & N < 3 | — | 重复 Step 6.5(改稿轮次 +1) |
+| + revise & N >= 3 | `human_gate` | 进 Step 6.5.8(系统停止) |
+| 任一轮 lint 含 **R18-P0** | `aborted_r18` | ⛔ 跳过所有兜底,人工介入修 P0 段 |
+| 任一轮 lint 含 R18-P1 / P2 | 不阻断 | 走 gate tree;`r18_dashboard.py` 计入触发率统计 |
+
+**核心原则**(Round 2 共识):
+- founder verdict 用**结构性优先级**体现,不靠加权数值
+- C reject 是硬否决(像 hard veto),不是 -10 分
+- B reject 时 C ship 不能单方面放行,进 human_gate 让风云裁决
+
+#### 6.5.8 · human_gate(Musk × Jobs Round 2 共识,2026-05-23 重写)⛔ ONLY when 6.5.7 判 human_gate
+
+**触发条件(任一)**:
+- 6.5.7 末轮 gate_tree 判 `human_gate`(C ship + B reject 的情况)
+- 6.5.7 三轮改稿后最后一轮仍 `revise`,且**没有任何一轮 lint 命中 R18-P0**
+
+**目标(Round 9 风云原话)**:**「我希望我连点击都不需要,最后只需要审阅草稿箱里的文章」**。系统先尝试用 content-judge D-2 代答(蒸馏自风云 9 个历史 vote),代答置信度 < 0.7 才走 _auto_exit_result 自动判定(不再停)。
+
+**Round 2 → Round 9 演化**:Round 2 共识是「停 + 推荐 + 等人」(对当时没有 content-judge 是对的);Round 9 蒸馏出 content-judge skill 后,human_gate 升级为**两层 fallback**:
+- L1: content-judge D-2 代答(机械化置信度公式,覆盖 80% 常见组合)
+- L2: D-2 confidence < 0.7 时退回 Round 2 共识方案(走 _auto_exit_result 自动出口(A≥65 → auto_partial_pass / A<65 → auto_abort))
+
+**执行流程**:
+
+0. **(Round 9 新增)调 content-judge skill D-2 代答**:
+
+```
+用 content-judge skill D-2 human_gate 判断:
+输入 = {
+  A_score: <float>,
+  B_verdict: "ship" | "no-ship" | "skip",
+  C_verdict: "ship" | "not_ship" | "skip",
+  revise_round_N: <int 0-3>,
+  R18_hit: <bool>
+}
+输出 = {
+  decision: "ship" | "revise" | "abort" | "aborted_r18",
+  confidence: 0-1,
+  reasoning: "...",
+  next_step: "...",
+  degraded: <bool>
+}
+```
+
+D-2 置信度公式见 content-judge/SKILL.md Part 2 表格:
+- A ≥ 60 + B ship + C ship → ship, confidence 0.9
+- A ≥ 60 + B reject + C ship + N=0 → revise, confidence 0.85
+- A ≥ 60 + B reject + C ship + N=2 → revise, confidence 0.65 → **fallback**
+- A ≥ 65 + N ≥ 3 → ship partial_pass, confidence 0.7
+- A < 65 + N ≥ 3 → abort, confidence 0.75
+- R18 命中 → aborted_r18, confidence 1.0
+- 历史没见过的组合 → confidence 0.5 → **fallback**
+
+行为按 D-2 输出走:
+   - `confidence ≥ 0.7` → **自动执行 decision**(进 revise loop / ship to Step 7 / abort,M4 红线连点击都不要)
+   - `confidence < 0.7` 或 `degraded=true` → 进 L2(下面的步骤 1-4 Round 2 共识方案)
+   - `decision = aborted_r18` → 跳过 Step 7,所有 draft + lint 甩给风云人工修 P0 段(不进 L2)
+
+**数据飞轮 v1 自动 log**:把 D-2 verdict 写一行到 `~/.claude/skills/content-judge/data/founder_feedback.jsonl`:
+```jsonl
+{"ts":"<ISO>","decision_type":"D2","slug":"<slug>","draft_path":"<v{N} path>","a_score":<float>,"b_verdict":"<...>","c_verdict":"<...>","revise_round_N":<int>,"R18_hit":<bool>,"decision":"<...>","confidence":<float>,"degraded":<bool>,"fengyun_actual_verdict":null,"matched":null,"note":""}
+```
+
+---
+
+**L2(原 D-2 fallback 时人工兜底方案,Round 24 已废)** — 改自动出口:
+
+1. 把每一轮的三轨 verdict + 对应 lint 报告路径打包成 JSON(rounds.json):
+
+```json
+{
+  "threshold_a": 60,
+  "rounds": [
+    {"round": 0, "draft_path": "output/drafts/<slug>-v0.md", "a_score": 62.1,
+     "b_verdict": "no-ship", "c_verdict": "no-sign",
+     "lint_json_path": "output/drafts/<slug>-v0.lint.json"},
+    {"round": 1, "draft_path": "...-v1.md", "a_score": 65.4, "...": "..."},
+    {"round": 2, "draft_path": "...-v2.md", "a_score": 71.2, "...": "..."},
+    {"round": 3, "draft_path": "...-v3.md", "a_score": 69.8, "...": "..."}
+  ]
+}
+```
+
+2. 跑:
+```bash
+python tools/critic_vote.py --all-rounds <rounds.json> \
+    --out output/runs/<slug>-human_gate.json
+```
+
+3. 读 `decision` 字段:
+   - `ship` + `auto_partial_pass: true` → 自动 partial_pass 兜底,进 Step 7(封面)
+   - `abort` + `auto_abort: true` → 自动终止 pipeline,runlog 标记
+   - `aborted_r18` → 跳过 Step 7,所有 draft + lint 甩给风云人工修 P0 段(R18 仍是唯一保留的真人介入)
+   - `abort`(无 auto_abort 字段)→ A 轨缺,工具链断
+
+**推荐版本算法**(critic_vote.py 内置):
+
+```
+recommended_version = argmax(A_score)   # 按 A 分降序
+tie-break: 同 A 分取最晚轮次(改稿基于反馈逐步精化,后版本通常更精)
+```
+
+**关键(不能违反)**:这是「推荐」不是「自动 ship」。风云三选一:
+- ✅ **接受推荐版本** → 手动跑 Step 7 出封面 + Step 8 推草稿
+- ✏️ **改某一版** → 改完手动跑 lint 再过 6.5.7
+- ❌ **弃稿** → 放弃这个主题
+
+**Step 9 报告必加字段**(human_gate 时):
+- `decision: human_gate`(L2 触发) 或 D-2 实际 decision(L1 通过)
+- `decision_source: "content-judge D-2 (L1)"` 或 `"L2 human fallback"` 或 `"D-2 then L2"`
+- `D2_confidence: <float>`(L1 跑过都要写)
+- `recommended_version: v{N}`(仅 L2 时)
+- `recommended_draft_path: <path>`(仅 L2 时)
+- `recommended_reason: 按 A 分排序推荐(round N, A=x, 仅参考)`
+- 四轮 round_info 对照表(round / a_score / b_verdict / c_verdict)
+- ⛔ L2 时提示「content-judge 置信度不足(<x>),退回 Round 2 共识:停 + 推荐 + 走自动出口」
+- ✅ L1 通过时提示「content-judge D-2 代答 verdict=<x> confidence=<x>,harness 继续」
+
+#### 6.5 铁律 ⛔
+
+- 不许跳过任何小步骤(6.5.1 → 6.5.7,必要时 6.5.8)
+- 改稿不许大改重写(±10% 字数硬约束)
+- 改稿超 3 轮 → 走 6.5.8 partial_pass(不无脑中止;但 R18 命中是例外,直接 aborted_r18)
+- critic 反馈必须落到具体段落,不许说"整体感觉不行"
+- voice 一致性优先于其它一切修复
+- **R18 是硬否决**:商业机密泄漏属于不可接受错误,partial_pass 兜底不适用,必须人工介入
+
+### Step 7 · 出封面(Phase 7 升级版,2026-05-22)
+
+**主力工具**:`tools/generate_cover_by_template.py`(豆包 Seedream 5.0 火山引擎方舟)
+
+**7 模板**(Phase 7 从 5 扩到 7)分类路由 + 风云专属云形签名,详细规范见 `D:\Dev\ai-wechat-pipeline\COVER_STYLE_GUIDE.md`。
+
+#### 调用方式
+
+```bash
+python tools/generate_cover_by_template.py \
+    --draft output/drafts/YYYYMMDD-<slug>-v0.md \
+    --research output/research/YYYYMMDD-<slug>.md
+```
+
+参数:
+- `--draft` 必需(自动从 draft frontmatter / 文件名推断 slug 输出路径)
+- `--research` 可选(默认自动按 draft 推断)
+- `--template T1_agent|T2_research|T3_compare|T4_news|T5_method|T6_portrait_concept|T7_flow_narrative` 可选(默认自动路由)
+- `--title` `--subtitle` 可选(默认从 frontmatter 抽,推荐手动指定干净的纯标题以提高路由准确率)
+- `--seed <int>` 可选
+- `--candidates N`(Phase 7 新增)生成 N 张候选 seed 不同,让风云挑文字最准的一张
+- `--max-retries N`(Phase 7 新增,默认 2)单张失败 retry 次数
+
+输出:`output/images/YYYYMMDD-<slug>-cover.png`
+
+#### 7 模板 metaphor 矩阵(Round 16 重写 2026-05-25,Rand 路线 form follows content)
+
+**Round 16 重大变更**:砍掉 6 个模板里的「sketchnote 男孩坐桌前」霸权(只 T6 保留人物,因为 content 本来就是人)。每模板锚定 1 个独立 metaphor object,**metaphor IS the subject**。
+
+| 模板 | 场景 | aspect | **独立 metaphor object(Rand 路线)** |
+|---|---|---|---|
+| T1_agent | 智能体网络/MCP/Harness | 2.35:1 | **10-14 节点的智能体网络图**(中央陶土脑+工具图标+连线+装饰,无人)|
+| T2_research | 深度研究/拆解/论文 | 16:9 | **大显微镜剖面 + 解剖切片**(放大镜+图表+笔记+公式,无人)|
+| T3_compare | 产品对比/横评 | 16:9 | **2-3 产品卡 + 大 VS + 星级 + 横向对比图**(无中心人物指着)|
+| T4_news | 发布动态/重磅消息 | 2.35:1 | **公告板 + 焰火爆点 + 估值徽章 + 新闻条**(无人 holding tablet)|
+| T5_method | 方法论/框架(default fallback)| 16:9 | **5-7 层同心环 framework + 中央 core + 射线 + 标签**(无人)|
+| **T6_portrait_concept** | 人物专访/访谈 | 2.35:1 | **半身肖像 + 概念背景**(唯一保留人物,因为 content 本来就是人)|
+| T7_flow_narrative | 事件叙事/流程梳理 | 2.35:1 | **8-12 节点 timeline 占满 90% + 时间轴 + 关键 callout**(narrator 砍)|
+
+**4 人沙盒共识**(Musk + Jobs + Rand 真调 + Hara 真调,2026-05-25):
+- 用户拍板 Rand 路线 + 内容丰富,不走 Hara emptiness
+- form follows content — 每模板 metaphor 必须从 content 长出来
+- brand DNA 三件套**保留**:暖象牙 #FAF9F5 + 陶土橙 #D97757 + 「云」签名
+- 每模板 prompt 加 `AVOID: ANY human figure or cartoon character (X IS the subject)` 反约束
+
+#### 英文准确性加固(Phase 7)
+
+prompt 已内置 5 层机制,跑出来"Anthropic"/"Demis Hassabis"等专名 100% 准确:
+
+1. 标题在 prompt 内重复 5 次(场景 / RIGHT 区 / MUST read / repeat-1 / repeat-2 / final check)
+2. 英文专名暗示走 sans-serif 标题字层,不走 sketch wobble 层
+3. 显式 "DO NOT MISSPELL" 字符级精确指令
+4. AVOID 列表加 "letter dropout, letter substitution, typo, Antrompic, Antropic"
+5. retry × 2 默认开,失败自动换 seed 重跑
+
+兜底:风云草稿箱审稿时看缩略图人工 0.3 秒 pass/fail,触发 `--seed NEW` 重跑。
+
+#### 工具优先级链
+
+| 层级 | 工具 | 触发条件 |
+|---|---|---|
+| **主力 + retry × 2** | 豆包 Seedream(火山引擎方舟,.env 已配 `VOLCENGINE_IMAGE_KEY`) | 默认 |
+| **应急** | 风云手工指定 `--template TX --seed N` 重跑 | retry 全失败 |
+| **最后兜底** | `baoyu-cover-image` skill | 国内 API 全挂 |
+
+#### 风格识别度三件套(每张封面必含)
+
+1. 底色 `#F8F0E0`(暖米底)/ `#FAF9F5`(暖象牙)
+2. 主强调色 `#D97757`(陶土橙,唯一彩色)
+3. 抽象云形「云」(风云专属签名,赛博禅心+宝玉都没有)
+
+#### 复用检测
+
+如果 `output/images/YYYYMMDD-<slug>-cover.png` 已存在 → 默认复用,不重生成。要重生成必须用户显式说「换封面」。
+
+#### 7 模板路由规则(自动)
+
+扫 `output/research/<slug>.md` 前 400 字(或 draft frontmatter 后正文前 500 字)→ 关键词命中 → fallback 标题 → fallback T5。模板定义在 `tools/generate_cover_by_template.py` 的 `CATEGORY_RULES` 字典。
+
+**T6 触发关键词**:专访 / 对话 / 访谈 / 首次 / 独家 / 创始人 / amodei / altman / hassabis / brockman / fridman / huang 黄仁勋等。
+
+**T7 触发关键词**:流程 / 时间线 / 宫斗 / 事件 / 全过程 / 复盘 / 始末 / 来龙去脉 / 演化 / 进化 / 从0到。
+
+**注**:自动路由命中率约 80%,20% 需 `--template TX` 手动覆盖。这是预期行为不是 bug。
+
+#### 封面去重 gate(Round 15,2026-05-24)
+
+**Musk × Jobs 沙盒共识**:撞型根因 = `classify()` stateless,不知道昨天选过 T2,今天就别再选 T2。物理下限 = 7 模板 × 1 周容量充足,缺的是「记忆」。
+
+**自动生效**(默认 on):`generate_cover_by_template.py` 自动路由后会跑一次 `tools/cover_dedup.py` 7 天回看:
+- ✅ 当前模板 7 天内未用 → 通过,继续生成
+- ⚠️ 命中撞型(同 template_id 7 天内用过)→ 自动换 alternative_template(关键词第二高分 + 跳过最近 3 天用过的)
+
+**关键参数**:
+- 回看窗口 = 7 天(短于 opening/ending dedup 的 30 天,因为 7 模板容量充足)
+- 历史数据源:① 优先读 draft frontmatter `cover_template_id` ② fallback 跑 classify(draft 前 500 字) 反推
+- 撞型 fallback 链:同 template → 关键词次优(skip 最近 3 天) → 全 0 时 default T5
+
+**关闭 dedup**:`--skip-dedup` flag(手动指定 `--template TX` 时自动跳过 dedup)
+
+**示例 log**:
+```
+自动路由命中: T2_research
+⚠️  cover dedup 命中撞型: 封面模板 T2_research 已在 2026-05-24「Karpathy 转身的那笔账」用过 — 建议换 T6_portrait_concept
+🔀 换次优模板: T6_portrait_concept
+```
+
+**未来 cover-curator skill(Round 16+ 触发)**:
+- 已蒸馏 user-level skill 两个,先不接入:
+  - `paul-rand-perspective`(系列识别 + brand identity)
+  - `kenya-hara-perspective`(东方留白 + 中文美学)
+- 触发条件(任一达到才接入):
+  1. 7 模板覆盖不了的新主题出现 ≥ 2 次
+  2. cover_dedup 兜不住的撞型 ≥ 1 次
+  3. 风云对某张封面说「感觉不对但说不清」 ≥ 2 次
+
+##### → 立即写入 frontmatter(Step 7-cover 封面生成完成后)
+
+```yaml
+cover_pass: true
+cover_path: output/images/YYYYMMDD-<slug>-cover.png
+```
+
+2 个字段。封面文件必须物理存在。写完才进 Step 7.1-7.3 内文图。
+
+#### 内文图体系(Round 9 重设计,2026-05-24)
+
+**核心架构**:封面跟内文图**完全独立** — 封面走上面 7 模板 sketch-notes 体系不动,内文图走花叔决策 + AI 生成新体系。
+
+**Round 9 用户 3 个决策**:
+1. **R20 图密度不拦截** —「没图片的文章不一定不是好文章」,lint 改 info-only(已落地)
+2. **图片用 AI 生成 only** — 联网搜图剔出 pipeline(真照片 / 产品截图 / 数据图表 → 作者手动塞 escape hatch)
+3. **不蒸馏新 skill,用花叔做配图决策** — fork 成 `huashu-image-curator`(已落地),不污染原 huashu-perspective
+
+**Musk × Jobs Round 4-5 共识**:
+- 函数选候选位置 + skill 一次 LLM call 决策全篇(不是每张 1 call)
+- 数量由花叔决定(0-5 张,**允许 0 张**)
+- 篇内 style_anchor 一致 / 篇间自由
+- skill 内置 self-check(灵魂红线),不外加 critic 步骤
+
+##### 调用方式(三步)
+
+**Step 7.1: 函数预筛候选位置**(无 LLM 调用)
+```python
+from tools.illustrate_decider import read_article_meta, pick_candidates
+meta = read_article_meta(Path("output/drafts/YYYYMMDD-<slug>-v0.md"))
+candidates = pick_candidates(meta["body"])
+# candidates: List[Position],每个含 h2_title / position_idx / paragraph_preview / word_count
+```
+
+**Step 7.2: invoke `huashu-image-curator` skill Mode 2**(Claude 主线程 invoke)
+
+⚠️ **Round 21 决策 2:封面 + 内文图风格统一** —
+Step 7-cover(封面)已经先于 Step 7.2 跑过,生成的封面对应 sidecar 文件 `<cover-image>.style_anchor.txt`,**必须读出来作为 style_anchor 输入传给花叔**,确保篇内封面 + 内文图风格一致。
+
+```python
+# 读封面 style anchor(Step 7-cover 已生成的 sidecar)
+cover_anchor_path = Path("output/images") / f"{slug}-cover.style_anchor.txt"
+cover_style_anchor = cover_anchor_path.read_text(encoding="utf-8").strip() if cover_anchor_path.exists() else None
+```
+
+```
+用 huashu-image-curator Mode 2 配图决策:
+  - 文章: <article_md 全文>
+  - 候选位置: <pick_candidates 返回的 list>
+  - style_anchor: <cover_style_anchor>(Round 21:必须传封面 anchor,不再 null)
+
+输出 JSON {should_illustrate, count: 0-5, image_at_h2_indices, style_anchor, positions, prompts, alts, self_check}
+```
+
+**关键**:花叔在 Mode 2 输出里的 `style_anchor` 字段必须等于或扩展自 `cover_style_anchor`(基底:warm sketchnote / cream paper #F8F0E0 / terracotta #D97757 / cloud signature),不允许另起炉灶。
+
+**Bug 2 闭环 2026-05-24 Round 10**:JSON 必含 `image_at_h2_indices` 字段(slot 编号列表,0=intro hero / 1=H2[0] / ...)。illustrate_decider.write_metadata() 把这个字段写到 frontmatter,Step 8 post_fengyun_publish 读取后透传给 layout_rules,实现「花叔指定的图章节号 ↔ 渲染层」闭环。
+
+**Step 7.3: 调火山 Seedream 出图 + 写 metadata**
+
+```python
+from tools.illustrate_decider import generate_from_decision, write_metadata
+image_paths = generate_from_decision(decision, OUT_DIR, slug=meta["slug"])
+write_metadata(draft_path, decision, image_paths)
+```
+
+如果 `decision["should_illustrate"] == false` → `image_paths = []`,**继续 Step 8 推草稿**(0 张图合法 ship)。
+
+##### → 立即写入 frontmatter(Step 7.2 配图决策完成后)
+
+```yaml
+huashu_decision_pass: true
+huashu_image_curator_real_run: true
+huashu_image_curator_source: "huashu-image-curator Mode 2, count=3, style=warm sketchnote"
+image_at_h2_indices:
+  - 0
+  - 2
+  - 4
+```
+
+4 个字段(含 image_at_h2_indices list)。写完才进 Step 7.3 出图。
+
+##### post_fengyun_publish.py 自动 inline
+
+扫 `output/images/<slug>-NN.png` 按命名顺序拼到对应 H2 之后(`layout_rules.render_to_wechat_html` 的 `section_image_urls` 参数已支持)。命名规则跟 illustrate_decider.py 写出来的一致:`<slug>-01.png / 02.png / ...`。
+
+##### 失败回退链(Round 9 简化)
+
+1. **huashu-image-curator skill 不存在** → 跳过 Step 7.2 - 7.3,0 张图 ship,run log `degraded.illustration = "skill missing"`
+2. **skill 返回非 JSON / 解析失败** → 0 张图 ship,run log `degraded.illustration = "decision parse fail"`
+3. **火山 Seedream API 失败** → retry × 1(已有逻辑)→ 仍失败 → 0 张图 ship(部分失败的图 ship 已成功的)+ run log 标记
+4. **不再有「手动选图补救」步骤** —「允许 0 张图」已经覆盖这个 case
+
+##### 数据飞轮 v1 metadata
+
+每次配图决策后,illustrate_decider.write_metadata() 自动把以下字段写到 draft frontmatter:
+
+```yaml
+illustrate_anchor: warm reflective editorial illustration
+illustrate_count: 3
+illustrate_should: true
+images:
+  - path: output/images/<slug>-01.png
+    alt: "20-40 字中文 alt 文本"
+    h2: "他的转身"
+  - path: output/images/<slug>-02.png
+    alt: "..."
+    h2: "他在算的那笔账"
+```
+
+**30 天后回看**:聚合多篇文章 illustrate_anchor 分布,被动观察「研究 Agent 的云」长期视觉 IP 的潜在归纳。不主动约束,只观察。
+
+##### 真实素材 escape hatch(不入代码 pipeline)
+
+什么时候作者(风云)手动塞真实素材而不走 AI 生成:
+- 讲**特定人物**时放真照片(如 Karpathy 头像)
+- 讲**产品发布**时放官方截图(如 Claude 4.7 新功能截图)
+- 讲**数据**时放原始图表(如 Anthropic 财报折线图)
+
+操作:在 draft markdown 里手动插入 `![alt](path)`,illustrate_decider 不会覆盖已有的 inline 图。AI 生成层只补「概念性 / 情绪性 / 抽象 sketch」类的图。
+
+##### 为什么从 Round 5 P0 强制改成 Round 9 灵活
+
+Round 5 P0「每 1100 字 1 张强制」基于 PHASE1_FACTS 对标号数据(卡兹克 / 宝玉爆款规律)。Round 9 用户原话「没图片的文章不一定不是好文章」推翻强制,改为:
+- **被动观察**(数据飞轮记录 anchor / count,30 天后回看)
+- **主动决策**(花叔基于灵魂判断 + 选题胆量 + build-what-you-use,允许 0-5 张)
+- **R20 lint 改 info-only**(不阻断不警告)
+
+成本 vs 收益:Idiot Index < 1(每篇花叔决策 1 次 LLM call ≈ ¥0.05 + 出图 0-5 张 × ¥0.2 = ¥0-1/篇)。比强制 5 张更省 + 比强制 0 张更对场景。
+
+### Step 8 · 排版 + 推草稿
+
+```
+python tools/post_fengyun_publish.py output/drafts/YYYYMMDD-<slug>-v0.md
+```
+
+`post_fengyun_publish.py` 是从 `post_fengyun_v3.py` 通用化来的:
+- 接受 `DRAFT_PATH` 命令行参数
+- 自动按 `YYYYMMDD-<slug>-cover.*` 找封面
+- 内文图可选(`--insert TRIGGER=PATH=ALT` 多次)
+- frontmatter 抽 title / digest / author / style / theme / article_type / **image_at_h2_indices**(Bug 2 闭环)
+- **渲染走 `tools/layout_rules.py`**,**Round 10 起默认 huashu T-A 暖米黄风格**(2026-05-24)
+- image_at_h2_indices 从 frontmatter 读取后透传 layout_rules,**花叔决定的图章节号 ↔ 渲染层真正闭环**
+- 渲染成微信 HTML,先写本地 preview(`output/html/`),再上传 thumb + 创建 draft
+- 返回 `media_id`(草稿 ID)
+
+#### 渲染模式(2026-05-25 Round 21 决策 1:huashu 锁死为唯一活跃路径)
+
+**Round 21 决策 1.1+1.2 锁定** — 排版统一花叔,legacy renderer 和 default/classic 分支已物理砍掉:
+
+| 历史模式 | 现状 |
+|---|---|
+| `--render-mode layout_rules`(原默认) | **已不需要传**,argparse 中 `--render-mode` 选项已删 |
+| `--render-mode legacy` | ❌ **已砍**(post_fengyun_publish.py 删了 `_render_html_legacy` 函数 + 6 个硬编 style 常量) |
+| `style=default / classic` | ❌ **已砍**(layout_rules.py 删了 78 行 default 分支 + 13 个 default-only helper) |
+| `style=huashu`(任何值或不传) | ✅ **唯一活跃路径**,所有渲染都走 huashu T-A |
+
+**为什么砍**:用户决策(2026-05-25)「排版统一用花叔那个,其他的那些所谓排版都删了」。
+**lint HTML 上限**:Round 21 P0-17 抬到 60000 字节(原 20000 是 layout_rules 内部历史值,无外部出处;微信真实物理上限 ~65000)。
+**huashu 模板路径**:`D:\Dev\ai-wechat-pipeline\tools\layout_rules_huashu.yaml`
+
+**详细规则**:`D:\Dev\ai-wechat-pipeline\tools\layout_rules.py` 的 `LAYOUT_RULES` dict
+**完整落地文档**:`D:\Dev\ai-wechat-pipeline\docs\LAYOUT_RULES_ROUND3.md`
+**lint 自检**:render 后自动跑,有违规打印警告(不阻断,让风云人工 review 后决定推不推)
+
+#### Style 分支(2026-05-24 Round 5,跟 --render-mode 正交)
+
+writer 在 frontmatter 写 `style: huashu` → 整个流程**自动**走花叔风格,**无需 CLI 参数**。
+
+| frontmatter | layout 渲染 | lint 触发 |
+|---|---|---|
+| 无 `style` 字段(默认) | `LAYOUT_RULES` 9 维度(风云本人风格) | R0-R18 |
+| `style: huashu` + `theme: A` | `layout_rules_huashu.yaml` template_A(暖橙) | R0-R18 + R19_huashu - R27_huashu |
+| `style: huashu` + `theme: B` | `layout_rules_huashu.yaml` template_B(深红) | 同上 |
+
+**huashu 触发的 9 条额外 lint**(`fengyun_lint.py` 自动按 frontmatter.style 决定是否跑):
+- `R19_huashu_avg_para_length` warn — 平均段长 50-80
+- `R20_huashu_solo_lines` warn — 独段成行 ≥ 4 处
+- `R21_huashu_h2_pattern` warn — H2 命中 3 种模式之一
+- `R22_huashu_emoji_zero` **error** — emoji = 0(必改)
+- `R23_huashu_cta_zero` **error** — 零 CTA / 零二维码(必改)
+- `R24_huashu_long_para_ratio` warn — >200 字段落 ≤ 8%
+- `R25_huashu_ellipsis` warn — 省略号 ≤ 1 处
+- `R26_huashu_bold_per_para` **medium**(Round 23 新增) — **每段 bold ≤ 1 处** — Musk × Jobs 共识:单段 spotlight 1 chunk
+- `R27_huashu_bold_total` **medium**(Round 23 新增) — **全文 bold ≤ 5 处**(短文 < 1000 字 ≤ 3) — 物理依据:working memory 4±1
+
+**回滚**:writer 不写 `style` 字段即回退默认行为,零影响。
+**完整规则源**:`D:\Dev\ai-wechat-pipeline\tools\layout_rules_huashu.yaml`
+**辩论 + 6 份调研证据**:`D:\Dev\ai-wechat-pipeline\reports\huashu_layout_phase1\`
+
+成功:输出 `output/runs/YYYYMMDD-<slug>.json`,包含 `draft_media_id`。
+失败(网络 / token / quota):**留本地 HTML preview + 错误日志**,**不要重试**,让风云手工兜底。
+
+### Step 9 · 返回报告(必须 print 给用户)
+
+最后一步,把全流程结果汇总打出来:
+
+```
+=== fengyun-publish ship 报告 ===
+主题: <title>
+slug: <slug>
+北极星: <填空>
+
+草稿 ID: <draft_media_id>(human_gate 时为空,等风云人工选完才推草稿)
+选用版本: <v0 / v1 / v2 / v3>(human_gate 时是 recommended,正常 ship 时是末轮)
+
+critic 三轨(末轮):
+  A · critic v2.1: total=<n> read=<r> share=<s> like=<l>
+  B · huashu:     <ship/skip/降级原因>
+  C · fengyun:    <挂名/skip/降级原因>
+  决议(gate tree): <ship / human_gate / aborted_r18 / abort>
+  决议理由: <gate_tree reason>
+
+human_gate 详情(仅当 decision = human_gate):
+  recommended_version: v<N>
+  recommended_draft_path: <path>
+  recommended_reason: 按 A 分排序推荐(round <N> A=<x>,仅参考,不是自动 ship)
+  四轮 round_info 对照:
+    round 0 (v0): A=<x> B=<ship/no-ship/skip> C=<sign/no-sign/skip>
+    round 1 (v1): ...
+    round 2 (v2): ...
+    round 3 (v3): ...
+  ⛔ 系统停止,等风云自动出口:挑版本/改/弃稿
+     (Jobs 原话:是你 ship,不是系统替你 ship)
+
+R18 触发情况:
+  P0(明确自指 AI 身份):     <n 处 / 0>
+  P1(架构/skill/工具栈暴露): <n 处 / 0>
+  P2(自动化流程暴露):       <n 处 / 0>
+  (r18_dashboard.py 周报会监控阈值:P1>2 / P2>3 告警)
+
+机械 lint: 0 violations(末轮,不含 R18-P1/P2 计入统计的 hits)
+改稿轮数: <n>(最大 3 轮)
+总用时: <分钟>
+
+下一步(按决议分):
+  ship → 公众号后台 → 草稿箱 → 人工最终审阅 + 发出
+  human_gate → 风云三选一:接受 recommended / 改某一版 / 弃稿
+  aborted_r18 → 人工修 R18-P0 段后从 Step 6 重跑
+  abort → 修 sop_v2_1 工具链后重跑
+```
+
+并把 JSON 版本写到 `output/runs/YYYYMMDD-<slug>.json` 留档。
+
+---
+
+## 错误处理 / 降级总表
+
+| 故障 | 降级 |
+|---|---|
+| huashu-perspective skill 不存在 | Track B 跳过,只用 A + C 判 |
+| fengyun-writer critic_mode 不存在 | Track C 跳过,只用 A + B 判 |
+| B 和 C 都不存在 | A 单轨模式(等同 System A) |
+| wangxiaobo skill 不存在 / 报错 | Step 5 跳过,记 degraded |
+| aihot 拿不到数据 | 全部走 WebSearch |
+| baoyu-cover-image 不存在 / 出图失败 | 用 baoyu-imagine 备选,再不行让风云手工塞 |
+| `post_fengyun_publish.py` 推送失败 | 留本地 HTML preview + 错误日志,不重试 |
+| 改稿超 3 轮 critic 还没过 | 走 Step 6.5.8 human_gate(系统停止,日志推荐 A 分最高版本,风云人工挑/改/弃)|
+| 6.5.7 判 human_gate(C ship + B reject) | 同上,Step 6.5.8 等风云裁决 |
+| 任一轮 lint 命中 R18-P0(明确自指 AI 身份)| ⛔ `aborted_r18`,跳过所有兜底,人工介入修 P0 段 |
+| 任一轮 lint 命中 R18-P1 / P2 | 不阻断,走 gate tree;r18_dashboard 周报会告警是否需修 L1 writer |
+| 字数 lint 反复过不了(R12 振荡) | 中止,fengyun-writer 写不出 4000-5000 字深度文是 deeper issue |
+| corpus 检索不到主题 | 不视为故障,记 note 即可 |
+
+## System A vs System B 切换
+
+| 参数 | 行为 |
+|---|---|
+| 默认(无指定)| System B:fengyun-writer + 三轨 vote |
+| 用户说「System A」/「卡兹克风格」/「对标模式」| System A:`wechat-ai-pubaccount-writer` 出稿 + critic v2.1 单轨(Track A only),跳过 Step 5/Step 6 的 B/C |
+| 用户说「双轨」| 同时跑 A 和 B,产出 2 个 draft + 2 套 critic 报告,让风云选 |
+
+## 时间预算(预期端到端 wall-clock)
+
+| Step | 时长 |
+|---|---|
+| 1 · 北极星 + 主题 | 2 min |
+| 2 · 调研(并行)| 5-8 min |
+| 3 · 初稿 | 8-15 min(fengyun-writer 写 4000-5000 字)|
+| 4 · lint + 修(0-3 轮)| 3-10 min |
+| 5 · 王小波预审 | 3-5 min |
+| 6 · 三轨 critic | 3-6 min |
+| 7 · 封面 | 3-5 min |
+| 8 · 推草稿 | 1-2 min |
+| 9 · 报告 | < 1 min |
+| **顺利通过 = 30-50 min**;**最坏(3 轮改稿 + partial_pass)≈ 80-100 min** |
+
+## 配套脚本
+
+- `tools/ship.py` — orchestrator stub,接受 topic 参数,在 console 打印每一步该 invoke 哪个 skill / 该跑哪个 .py。不全自动跑 Claude skill(那些必须 Claude 主导),只做可机械化的事 + 流程提示
+- `tools/post_fengyun_publish.py` — 由 `post_fengyun_v3.py` 通用化,接受 DRAFT_PATH 命令行参数
+- `tools/critic_vote.py` — 读 score_draft.py + huashu/fengyun verdict JSON,输出投票决议(初版可以是简单 stub)
+- `tools/headless_ship.ps1` / `tools/headless_ship.bat`(Phase 7 新增)— headless 全自动入口,用 `claude -p` 触发本 skill。用法:
+  ```powershell
+  .\tools\headless_ship.ps1 -Topic "ship 一篇关于 Anthropic 一周 7 件事的文章"
+  ```
+  或双击 `.bat` 在 cmd 里跑。可配 Windows Task Scheduler 实现 cron 全自动。
+
+## 不做的事
+
+- ❌ 自动发出(违反 NORTH_STAR — 公众号最终发出永远人工)
+- ✅ 自动按 cron 跑(Phase 7 已通过 `tools/headless_ship.ps1` 接入)
+- ❌ 数据飞轮 metrics 回流(明天另开 skill / 脚本做)
+- ❌ 改 fengyun_lint.py / sop_v2_1.py 阈值(System A 锁定,反 p-hacking)
+- ❌ 自己生造 critic 阈值(60 这条是 System A baseline,不在这里改)
+- ❌ 跨账号 / 多公众号(单一项目「研究 Agent 的云」专用)
+
+## 风云手动只做的一件事
+
+公众号后台 → 草稿箱 → 看草稿 → 觉得 OK → 发出。其余全自动。
+
+## 调试 hook
+
+如果跑挂了,先看:
+
+1. `output/runs/YYYYMMDD-<slug>.json` 看到第几步 fail
+2. `output/drafts/*.lint.json` 看 lint 报告
+3. `.env` 里 `WECHAT_APPID` / `WECHAT_SECRET` 有没有(post_fengyun_publish.py 需要)
+4. `D:\Dev\ai-wechat-pipeline\style_match_features.parquet` / `viral_design_features.parquet` 在不在(sop_v2_1.py 需要)
