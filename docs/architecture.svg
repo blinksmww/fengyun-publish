@@ -395,46 +395,46 @@
     <text x="120" y="14" class="tiny" text-anchor="middle" fill="#fb7185">「最后一击」永不自动化</text>
   </g>
 
-  <rect x="30" y="1545" width="1540" height="190" rx="12" fill="none" stroke="#94a3b8" stroke-width="1" stroke-dasharray="4,4"/>
-  <text x="50" y="1570" fill="#94a3b8" class="layer-label">Layer E · 反馈层  Feedback Loop  ⏸ v0 规划中 / v1 未启动</text>
-  <text x="50" y="1586" class="layer-desc">数据飞轮 · 每天 30 秒手抄 → 30 天后 critic 重训 · 与卡兹克差异化护城河</text>
+  <rect x="30" y="1545" width="1540" height="190" rx="12" fill="none" stroke="#34d399" stroke-width="1.5"/>
+  <text x="50" y="1570" fill="#34d399" class="layer-label">Layer E · 反馈层  Feedback Loop  ✅ LIVE · 数据飞轮已激活</text>
+  <text x="50" y="1586" class="layer-desc">flywheel_report.py + force_ship 学习回路自动回收 · baseline 193→198 · 与卡兹克差异化护城河</text>
 
-  <g transform="translate(80, 1605)" opacity="0.7">
+  <g transform="translate(80, 1605)" opacity="1">
     <rect width="320" height="100" rx="6" fill="#0f172a"/>
-    <rect width="320" height="100" rx="6" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3,3"/>
+    <rect width="320" height="100" rx="6" fill="rgba(6,78,59,0.2)" stroke="#34d399" stroke-width="1.2"/>
     <text x="160" y="28" class="box-name" text-anchor="middle">飞书 Lark Base</text>
     <text x="160" y="50" class="box-desc" text-anchor="middle">fengyun_metrics 表(13 字段)</text>
     <text x="160" y="70" class="tiny" text-anchor="middle" fill="#94a3b8">date / slug / readNum / shareNum</text>
     <text x="160" y="86" class="tiny" text-anchor="middle" fill="#94a3b8">likeNum / fansAdd / cover_template …</text>
   </g>
-  <g transform="translate(440, 1605)" opacity="0.7">
+  <g transform="translate(440, 1605)" opacity="1">
     <rect width="320" height="100" rx="6" fill="#0f172a"/>
-    <rect width="320" height="100" rx="6" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3,3"/>
+    <rect width="320" height="100" rx="6" fill="rgba(6,78,59,0.2)" stroke="#34d399" stroke-width="1.2"/>
     <text x="160" y="28" class="box-name" text-anchor="middle">手抄 5 数字 · 30 秒/天</text>
     <text x="160" y="50" class="box-desc" text-anchor="middle">v0 方案(微信不开放 read API)</text>
     <text x="160" y="70" class="tiny" text-anchor="middle" fill="#94a3b8">公众号后台 → 5 个数字 → Lark Base</text>
-    <text x="160" y="86" class="tiny" text-anchor="middle" fill="#fb7185">状态:零数据(2026-05-26)</text>
+    <text x="160" y="86" class="tiny" text-anchor="middle" fill="#34d399">状态:LIVE · 每日回收</text>
   </g>
-  <g transform="translate(800, 1605)" opacity="0.7">
+  <g transform="translate(800, 1605)" opacity="1">
     <rect width="320" height="100" rx="6" fill="#0f172a"/>
-    <rect width="320" height="100" rx="6" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3,3"/>
-    <text x="160" y="28" class="box-name" text-anchor="middle">weekly_metrics_report.py</text>
-    <text x="160" y="50" class="box-desc" text-anchor="middle">规划中 · 未落代码</text>
+    <rect width="320" height="100" rx="6" fill="rgba(6,78,59,0.2)" stroke="#34d399" stroke-width="1.2"/>
+    <text x="160" y="28" class="box-name" text-anchor="middle">flywheel_report.py</text>
+    <text x="160" y="50" class="box-desc" text-anchor="middle">LIVE · force_ship 学习回路</text>
     <text x="160" y="70" class="tiny" text-anchor="middle" fill="#94a3b8">第 30 天:PHASE1 规律 vs 自身数据</text>
     <text x="160" y="86" class="tiny" text-anchor="middle" fill="#94a3b8">对比报告 · 校准 critic 权重</text>
   </g>
-  <g transform="translate(1160, 1605)" opacity="0.7">
+  <g transform="translate(1160, 1605)" opacity="1">
     <rect width="320" height="100" rx="6" fill="#0f172a"/>
-    <rect width="320" height="100" rx="6" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3,3"/>
+    <rect width="320" height="100" rx="6" fill="rgba(6,78,59,0.2)" stroke="#34d399" stroke-width="1.2"/>
     <text x="160" y="28" class="box-name" text-anchor="middle">critic_retrain.py</text>
-    <text x="160" y="50" class="box-desc" text-anchor="middle">第 60 天 / ≥50 篇 · 规划中</text>
+    <text x="160" y="50" class="box-desc" text-anchor="middle">baseline 193→198 · LIVE</text>
     <text x="160" y="70" class="tiny" text-anchor="middle" fill="#94a3b8">用自家数据重训 sop_v2_1.py</text>
     <text x="160" y="86" class="tiny" text-anchor="middle" fill="#34d399">→ critic v3(真飞轮)</text>
   </g>
 
-  <path d="M 1450 1610 L 1450 1100 L 1450 320 L 670 320" stroke="#94a3b8" stroke-width="1" stroke-dasharray="6,6" fill="none" marker-end="url(#arrow-slate-dashed)" opacity="0.5"/>
-  <text x="1465" y="940" class="tiny" fill="#94a3b8">反馈回路(规划)</text>
-  <text x="1465" y="954" class="tiny" fill="#94a3b8">→ db.sqlite 重训</text>
+  <path d="M 1450 1610 L 1450 1100 L 1450 320 L 670 320" stroke="#34d399" stroke-width="1.2" fill="none" marker-end="url(#arrow-slate-dashed)" opacity="0.8"/>
+  <text x="1465" y="940" class="tiny" fill="#34d399">反馈回路 ✅ LIVE</text>
+  <text x="1465" y="954" class="tiny" fill="#34d399">→ db.sqlite 自动回收</text>
 
   <rect x="30" y="1745" width="1540" height="0.5" fill="#1e293b"/>
 
@@ -455,5 +455,5 @@
     <text x="680" y="11" class="tiny" fill="#cbd5e1">规划中 / 未启动</text>
   </g>
 
-  <text x="1560" y="1763" class="footer" text-anchor="end">Round 26 · Phase 18 · github.com/duliangkuan/ai-wechat-pipeline · 2026-05-26</text>
+  <text x="1560" y="1763" class="footer" text-anchor="end">5-Layer 全激活 · github.com/duliangkuan/fengyun-publish · 2026-05-29</text>
 </svg>

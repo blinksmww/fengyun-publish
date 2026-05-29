@@ -42,9 +42,9 @@
 
 ## 架构
 
-![架构图](docs/architecture@2x.png)
+![架构图](docs/architecture.svg)
 
-> 源文件:[`docs/architecture.svg`](docs/architecture.svg) · 高清 PNG:[`docs/architecture@2x.png`](docs/architecture@2x.png)
+> 源 SVG:[`docs/architecture.svg`](docs/architecture.svg) · 完整版(更详细):[`docs/architecture_full.svg`](docs/architecture_full.svg)
 
 5 个 Layer 自下而上:
 
@@ -54,7 +54,7 @@
 | B | 决策层 | ITI 选题 → 写稿 → harness 评分 → lint → 三轨 critic → gate 保安 | ✅ LIVE |
 | C | 渲染层 | `layout_rules` huashu 排版 + 7 模板封面 + 内文图 + placeholder 兜底 | ✅ LIVE |
 | D | 发布层 | 微信公众号 API + Cloudflare Worker 反代 + 运行日志 + 审计 | ✅ LIVE |
-| E | 反馈层 | 飞书 Base 数据飞轮 + critic 重训 | ⏸ v0 规划中 |
+| E | 反馈层 | 数据飞轮 · `flywheel_report.py` + force_ship 学习回路 | ✅ LIVE(baseline 193→198) |
 
 ---
 
