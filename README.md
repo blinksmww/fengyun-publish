@@ -42,8 +42,9 @@
 
 ## 架构
 
-![架构图](docs/architecture.svg)
+[![架构图](docs/architecture.svg)](https://raw.githubusercontent.com/duliangkuan/fengyun-publish/main/docs/architecture.svg)
 
+> 🔍 **图太密看不清?** [点击图片打开原图](https://raw.githubusercontent.com/duliangkuan/fengyun-publish/main/docs/architecture.svg)(矢量图,浏览器里 Ctrl+滚轮 无限放大),或到 [**项目官网全屏缩放查看**](https://fengyun-publish-website.vercel.app/#blueprint)。
 > 源 SVG:[`docs/architecture.svg`](docs/architecture.svg) · 完整版(更详细):[`docs/architecture_full.svg`](docs/architecture_full.svg)
 
 5 个 Layer 自下而上:
