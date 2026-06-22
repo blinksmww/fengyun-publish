@@ -26,11 +26,42 @@ import sys
 import urllib.request
 from pathlib import Path
 
+import requests
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 ROOT = Path(r"D:\Dev\ai-wechat-pipeline")
 DOTENV = ROOT / ".env"
+
+
+# === SOCKS5 代理(路径 A:推草稿走云端固定 IP 出口)===
+# 从 .env 读 WECHAT_SOCKS5_PROXY=host:port,微信 API 调用走 SOCKS5h(remote DNS)。
+# 未设此变量时 PROXIES=None,走本地直连(保持原行为)。
+# 用 requests + socks5h 是工业标准:SSH -D 只支持 remote DNS,
+# urllib.request + PySocks monkey-patch 在 SOCKS5h 模式下不兼容(已实测验证)。
+PROXIES = None
+
+
+def _early_load_proxy():
+    global PROXIES
+    proxy = os.environ.get("WECHAT_SOCKS5_PROXY", "").strip()
+    if not proxy and DOTENV.exists():
+        for line in DOTENV.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line.startswith("WECHAT_SOCKS5_PROXY="):
+                proxy = line.split("=", 1)[1].strip().strip('"').strip("'")
+                break
+    if not proxy:
+        return
+    PROXIES = {
+        "http": f"socks5h://{proxy}",
+        "https": f"socks5h://{proxy}",
+    }
+    print(f"[proxy] WeChat API 走 socks5h://{proxy}(出口=云端 IP)", file=sys.stderr)
+
+
+_early_load_proxy()
 
 
 def _load_env():
@@ -52,12 +83,11 @@ def _load_env():
 def _get_token(appid: str, secret: str) -> str:
     url = (f"https://api.weixin.qq.com/cgi-bin/token"
            f"?grant_type=client_credential&appid={appid}&secret={secret}")
-    ctx = ssl.create_default_context()
-    with urllib.request.urlopen(url, context=ctx, timeout=30) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-        if "access_token" not in data:
-            raise RuntimeError(f"WeChat token error: {data}")
-        return data["access_token"]
+    resp = requests.get(url, proxies=PROXIES, timeout=30)
+    data = resp.json()
+    if "access_token" not in data:
+        raise RuntimeError(f"WeChat token error: {data}")
+    return data["access_token"]
 
 
 # 模块级图片上传缓存 — 同一 (abs_path, kind) 上传只走一次,避免重复消耗素材库配额
@@ -77,20 +107,11 @@ def _upload(token: str, path: Path, kind: str = "img") -> dict:
                f"?access_token={token}&type=thumb")
     else:
         url = f"https://api.weixin.qq.com/cgi-bin/media/uploadimg?access_token={token}"
-    boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW"
     mime = mimetypes.guess_type(path.name)[0] or "image/png"
-    body = (
-        f"--{boundary}\r\n"
-        f'Content-Disposition: form-data; name="media"; filename="{path.name}"\r\n'
-        f"Content-Type: {mime}\r\n\r\n"
-    ).encode("utf-8") + path.read_bytes() + f"\r\n--{boundary}--\r\n".encode("utf-8")
-    req = urllib.request.Request(
-        url, data=body, method="POST",
-        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
-    )
-    ctx = ssl.create_default_context()
-    with urllib.request.urlopen(req, context=ctx, timeout=60) as resp:
-        resp_data = json.loads(resp.read().decode("utf-8"))
+    with open(path, "rb") as f:
+        files = {"media": (path.name, f, mime)}
+        resp = requests.post(url, files=files, proxies=PROXIES, timeout=60)
+    resp_data = resp.json()
 
     _IMAGE_UPLOAD_CACHE[cache_key] = resp_data
     return resp_data
@@ -106,16 +127,15 @@ def _create_draft(token: str, html: str, title: str, digest: str, author: str,
         "need_open_comment": 1, "only_fans_can_comment": 0, "show_cover_pic": 1,
     }
     body = json.dumps({"articles": [article]}, ensure_ascii=False).encode("utf-8")
-    req = urllib.request.Request(
-        url, data=body, method="POST",
-        headers={"Content-Type": "application/json"},
+    resp = requests.post(
+        url, data=body,
+        headers={"Content-Type": "application/json; charset=utf-8"},
+        proxies=PROXIES, timeout=60,
     )
-    ctx = ssl.create_default_context()
-    with urllib.request.urlopen(req, context=ctx, timeout=60) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-        if "media_id" not in data:
-            raise RuntimeError(f"WeChat draft error: {data}")
-        return data["media_id"]
+    data = resp.json()
+    if "media_id" not in data:
+        raise RuntimeError(f"WeChat draft error: {data}")
+    return data["media_id"]
 
 
 def _update_draft(token: str, existing_media_id: str, html: str,
@@ -142,16 +162,15 @@ def _update_draft(token: str, existing_media_id: str, html: str,
         "articles": article,  # 单篇 — 注意 API 这里是单 dict 不是 list
     }
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    req = urllib.request.Request(
-        url, data=body, method="POST",
-        headers={"Content-Type": "application/json"},
+    resp = requests.post(
+        url, data=body,
+        headers={"Content-Type": "application/json; charset=utf-8"},
+        proxies=PROXIES, timeout=60,
     )
-    ctx = ssl.create_default_context()
-    with urllib.request.urlopen(req, context=ctx, timeout=60) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-        if data.get("errcode", 0) != 0:
-            raise RuntimeError(f"WeChat draft/update error: {data}")
-        return existing_media_id  # 更新成功,沿用原 media_id
+    data = resp.json()
+    if data.get("errcode", 0) != 0:
+        raise RuntimeError(f"WeChat draft/update error: {data}")
+    return existing_media_id  # 更新成功,沿用原 media_id
 
 
 # ===== draft parsing / rendering =====

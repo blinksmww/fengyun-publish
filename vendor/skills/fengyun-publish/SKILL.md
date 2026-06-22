@@ -61,18 +61,17 @@ ITI 三段漏斗(I-1 广搜 → T 选题 → I-2 深搜)+ 北极星填空 + dogf
 
 ---
 
-### Stage 2 / 4 · Write(写初稿 + 标题/结尾 harness)
+### Stage 2 / 4 · Write(写初稿 + 标题信号检查)
 
-调 fengyun-writer skill 写 4000-5000 字 → 跑 title_signal harness(10 维评分 + dedup,上限 3 retry)→ 跑 ending_signal harness(3 关 + 上限 3 retry)。
+调 fengyun-writer skill 写 4000-5000 字 → 跑一次 title_signal + title_dedup 出参考信号(**ADVISORY 不拦路**;v2.0 2026-06-10 降档,依据 W9 审计见 stage_02)。**ending harness 已删**(v2.0:W9 审计证伪判别力,结尾质量由王小波 + 花叔 Track B 把守)。
 
 **必跑命令骨架**:
 - 调 `fengyun-writer` skill(完整稿模式,不许主线程手写)
-- 标题打分 `python tools/title_signal.py --title "<TITLE>" --topic-keywords <e1> <e2> --body-chars <N>` + `python tools/title_dedup.py --title "<TITLE>" --hook-type <H> --draft output/drafts/<slug>-v0.md`(exact 命令见 stage_02)
-- 结尾打分 `python tools/ending_signal.py --draft output/drafts/<slug>-v0.md` + `python tools/ending_dedup.py --draft output/drafts/<slug>-v0.md`(exact 命令见 stage_02)
+- 标题打分 `python tools/title_signal.py --title "<TITLE>" --topic-keywords <e1> <e2> --body-chars <N>` + `python tools/title_dedup.py --title "<TITLE>" --hook-type <H> --draft output/drafts/<slug>-v0.md`(跑一次记 run log;fail 给 writer 一次自主改标题机会,不循环不回评;exact 见 stage_02)
 
 **关键设计**:
-- harness 上限 3 次,不达标用最后一版(避免阻塞主流程)
-- title / ending dedup 必须传 `current_draft_path=draft_path` 防 self-match
+- 标题检查 advisory:fail 不阻断 ship;dedup 撞型信号参考价值最高,writer 应优先采纳
+- title_dedup 必须传 `current_draft_path=draft_path` 防 self-match
 - 改稿只动局部不重写全文
 
 **详见**:`references/stage_02_write.md`
@@ -174,7 +173,7 @@ R18 触发: P0=<n> P1=<n> P2=<n>
 | 文件 | 详细内容 |
 |---|---|
 | `references/stage_01_collect.md` | Step 1.0 ITI 广搜 / 1.1-1.3 北极星 + 选题 / 1.5 dogfood + opening harness / 2 ITI I-2 深搜 |
-| `references/stage_02_write.md` | Step 3 fengyun-writer / 3.3 title harness / 3.5 ending harness |
+| `references/stage_02_write.md` | Step 3 fengyun-writer / 3.3 标题信号检查(advisory)/ 3.5 已删(v2.0) |
 | `references/stage_03_verify.md` | Step 4 lint / 5 王小波 / 6 双轨 critic vote / 6.5 改稿循环 + 隐藏天花板 |
 | `references/stage_04_publish.md` | Step 7 封面 + 7.1-7.3 内文图 / 8 排版+推草稿 / 9 报告 |
 | `references/failure_modes.md` | 降级总表 + System A/B 切换 + 配套脚本 + 调试 hook |

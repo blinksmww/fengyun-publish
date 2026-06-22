@@ -10,6 +10,15 @@
 
 ## 版本变更日志(读完才往下看)
 
+### v2.0(2026-06-10 — 砍 ending harness + title harness 降档 advisory)
+
+**依据 = W9-after 审计实证**(`reports/dim_trigger_rate_audit_w9_after.json`,321 篇含卡兹克/宝玉/赛博禅心头部真品),不是拍脑袋:
+
+- **Step 3.5 ending harness 整套删除**:4 个维度里「末段字数 ≥150」99.3% 全过(永不触发)、「金句/摘要/召回密度 ≥6」三维把 **92-95% 头部真品判不合格**(全员触发)——1 维永不响 + 3 维全员响 = 零判别力,这套阈值把模仿对象全体判死刑。原 PHASE1 4 信号(b_last_para_chars ρ=+0.300 等)是 critic 特征层的相关性证据,**不构成这套手写阈值的有效性证据**。结尾质量防线由 Step 5 王小波语感预审 + Step 6 花叔 Track B 承担(「愿你也能+颜文字」式公式收尾本就是花叔 emotion 维度的毙稿点,有 verdict 实例:`output/verdicts/guizang-xhs-skill_huashu.json`)。
+- **Step 3.3 标题 harness 降档 ADVISORY**:W9 调参后头部真品 verdict pass 率仍仅 **32.7%**(把 67% 模仿对象判死);真实发文 n=13 不足以校准阈值。降为:**跑一次出参考信号,fail 时给 writer 一次自主改标题机会,不循环不阻断**。等数据飞轮攒够真实打开率样本再校准回 BLOCKING。
+- `ending_signal.py` / `ending_dedup.py` / `title_signal.py` / `title_dedup.py` **保留在 tools/ 当审计仪器**(`dim_trigger_rate_audit.py` 依赖)——仪器不是引擎,流程不再依赖其 verdict。
+- 19 Step → 18 Step;每篇 ship 最多省 6 轮「评分→重写」循环。
+
 ### v1.9(2026-05-27 arch-refactor-v1 W7 — cover 无模板重做)
 
 - **物理目的**:把封面从「7 固定模板 + 关键词路由 + 写死英文 prompt + 7 天 dedup」换成「**花叔 cover mode 读文章自著中文 Seedream prompt**(无模板;Style Block 锁品牌色 + 手绘风,主体 metaphor 放给 AI)→ 薄客户端 `seedream_client.py` 出图(retry ×3 指数退避 + placeholder fallback 全内藏)」。
@@ -200,7 +209,7 @@ P1 / P2 严重度递降,但任何级别命中都不允许过 gate。
 
 ---
 
-## 全流程 19 个 Step 总览
+## 全流程 18 个 Step 总览(v2.0 砍 ending harness 后 19→18)
 
 > ⚠️ **W4 全局(2026-05-27,arch-refactor-v1)— 读任何 Step 前先看这条**:
 > **Step 3 / 3.3 / 3.5 / 4 / 5 / 6 / 6.5.8 / 7.2 / 7-cover 下文里的所有 `*_pass` / `*_real_run` / `*_source`
@@ -230,8 +239,8 @@ Step 1.5  dogfood gate + opening harness(BLOCKING,上限 3 retry)
 Step 2    ITI I-2 深搜调研 → research.md(BLOCKING)
 ─── 写作层 ───
 Step 3    fengyun-writer 写完整稿 4000-5000 字(BLOCKING)
-Step 3.3  标题 harness(BLOCKING,上限 3 retry)
-Step 3.5  ending harness(BLOCKING,上限 3 retry)
+Step 3.3  标题信号检查(ADVISORY,跑一次记参考,v2.0 降档不拦路)
+          (v2.0 已删 Step 3.5 ending harness — W9 审计证伪判别力)
 ─── 清洁层 ───
 Step 4    fengyun_lint 机械层(BLOCKING;含 W2.C2 新增 R29 破折号 + R30 否定排比)
 Step 5    wangxiaobo-perspective 语感预审(BLOCKING)
@@ -487,58 +496,37 @@ north_star: "..."  # 从 Step -1
 
 ---
 
-## Step 3.3 · 标题 harness
+## Step 3.3 · 标题信号检查(v2.0 降档 ADVISORY,2026-06-10)
 
 **触发**:Step 3 完成。
 
 **输入**:draft frontmatter title + topic entities + body word count。
 
-**执行**(上限 3 retry):
-**DEFAULT 上限 3 轮**。每轮:① 真 CLI:title_signal 评分(给 hook_type)→ title_dedup 去重(`--draft` 防 self-match,Bug 4):
+**执行**(**跑一次,不循环,不阻断**):
+① 真 CLI:title_signal 评分(给 hook_type)→ title_dedup 去重(`--draft` 防 self-match,Bug 4):
 ```bash
 python tools/title_signal.py --title "<TITLE>" --topic-keywords <e1> <e2> --body-chars <N>
 python tools/title_dedup.py --title "<TITLE>" --hook-type <H> --draft output/drafts/<slug>-v0.md --max-age-days 14 --max-n-check 10
 ```
-② pass(signal verdict=pass + dedup 不撞型,主线程合成两个 JSON)→ break ③ 否则 invoke `fengyun-writer` skill(改标题模式,**只改 frontmatter title**)带 feedback,回 ①。exact 见 `references/stage_02_write.md` Step 3.3。
+② 两个 JSON 输出**原样记入 run log 作参考信号**(数据飞轮校准材料)。
+③ signal `verdict==fail` 或 dedup 撞型 → 把 `redo_feedback` 给 `fengyun-writer`(改标题模式,**只改 frontmatter title**)**一次**,由 writer 自主裁量改或不改;改完**不回评**,直接进 Step 4。
 
-**评分**(总分 100,≥ 65 PASS):
-- 字数 ∈ [20, 40](20 分)
-- 数字组数 ≤ 1(10 分)
-- 命中 PHASE1 7 钩子任一(20 分)— **W9 改回软分加权**(B4: hard gate 卡掉 72% 卡兹克爆款;只看总分门槛)
-- 品牌词白名单(20 分,主题相关时)
-- 反品牌词黑名单(20 分,扣分)
-- 4 共同特质 ≥ 1/4(10 分,W9: ≥2→≥1,B4 ≥2 仅 3.4%)
-- 致命组合 risk:**W9 已砍**(B4 0/321;tb_ratio/english_chars 留 advisory)
+**为什么 ADVISORY 不 BLOCKING**(v2.0):W9 调参后头部真品(321 篇审计)verdict pass 率仍仅 32.7%——闸门把 67% 模仿对象判死 = 阈值体系无判别力;真实发文 n=13 不足以校准。**dedup 撞型信号仍最有参考价值**(防 14 天内连续同型标题),所以保留传给 writer。等数据飞轮攒够真实打开率样本,再校准回 BLOCKING(校准动作必须有独立科学动机,反 p-hacking)。
 
-**BLOCKING**:3 轮不过 → 用最后一版。
-
-**pass_flag**(frontmatter):`title_pass: true` + `title_hook: "颠覆认知"` + `title_score: 95`
-- **Round 25 防伪**(gate 强制):
-  - `title_real_run: true` — 必须真跑 title_signal.py + title_dedup.py
-  - `title_source: "title_signal score=X, hook_type=Y, dedup pass"` — 真实评分证据
+**产物**:无独立 invocation;title_signal/title_dedup 的 JSON 进 writer.invocation.json 的 summary 或 run log 即可。
 
 ---
 
-## Step 3.5 · ending harness
+## Step 3.5 · (v2.0 已删:ending harness,2026-06-10)
 
-**触发**:Step 3.3 完成。
+**砍除依据**(W9-after 审计 `reports/dim_trigger_rate_audit_w9_after.json`,321 篇含头部真品):
+- 「末段字数 ≥150」hit 99.3% — **永不触发的死维度**
+- 「金句/摘要/召回密度 ≥6」三维 trigger 91.9% / 94.8% / 93.2% — **把 92-95% 头部真品判不合格**
+- 1 维永不响 + 3 维全员响 = 零判别力;这套阈值把模仿对象全体判死刑
 
-**输入**:draft 全文。
+**结尾质量防线移交**:Step 5 王小波语感预审 + Step 6 花叔 Track B(公式化收尾/「愿你也能+颜文字」本就是花叔 emotion 维度毙稿点,实例见 `output/verdicts/guizang-xhs-skill_huashu.json`)。
 
-**执行**(**严禁偷懒只 import**):
-真 CLI:ending_signal 评分 + ending_dedup 去重读 draft 全文(`--draft` 同时作 current_draft_path 防 self-match,Bug 4);不通过 → invoke `fengyun-writer` 改末段(只改末段):
-```bash
-python tools/ending_signal.py --draft output/drafts/<slug>-v0.md
-python tools/ending_dedup.py --draft output/drafts/<slug>-v0.md --max-age-days 30 --max-n-check 5
-```
-- `all_pass` = signal `verdict==pass` + `physical_pass` + dedup `is_too_similar==false`(主线程合成两个 JSON)
-
-**BLOCKING**:撞「愿你也能 + 颜文字」公式 → revise。
-
-**pass_flag**(frontmatter):`ending_pass: true`
-- **Round 25 防伪**(gate 强制):
-  - `ending_real_run: true` — 必须真跑 ending_signal.py + ending_dedup.py
-  - `ending_source: "ending_signal score=X, dedup pass"` — 真实评分证据
+`ending_signal.py` / `ending_dedup.py` 保留在 tools/ 当审计仪器(`dim_trigger_rate_audit.py` 依赖),ship 流程不再调用。
 
 ---
 

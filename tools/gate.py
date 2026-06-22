@@ -57,7 +57,7 @@ REQUIRED_BASE_FIELDS = ["title", "digest", "author", "slug", "date", "north_star
 # render 由 Stop hook ship_complete_check.py 查)
 REQUIRED_INVOCATIONS = [
     ("iti", "Stage 1 Collect — ITI 调研"),
-    ("writer", "Stage 2 Write — fengyun-writer 出稿 + 标题/结尾 harness"),
+    ("writer", "Stage 2 Write — fengyun-writer 出稿 + 标题信号检查(advisory)"),
     ("verify", "Stage 3 Verify — lint + 王小波 + 双轨 critic vote 决议"),
     ("critic_b_huashu", "Stage 3 Track B — huashu-perspective 灵魂"),
     ("critic_c_content_judge", "Stage 3 Track C — content-judge 挂名意愿"),
@@ -355,6 +355,11 @@ def extract_from_stdin_hook_payload() -> tuple[Path | None, bool]:
         # 关键 dispatcher:只在命令含 post_fengyun_publish 时才需要 check
         is_publish = "post_fengyun_publish" in cmd
         if not is_publish:
+            return None, False
+        # v2.0(2026-06-10)fengyun-lite 通道:命令显式带 --force-skip-gate 时 hook 层放行,
+        # 由 post_fengyun_publish 的 C 兜底层接管(红框警报 + audit log 照记,不是静默绕过)。
+        # 场景:lite 草稿没有 6 件 invocation(人在场即 gate),无人值守 prompt 从不含此 flag。
+        if "--force-skip-gate" in cmd:
             return None, False
         # 匹配 .md path
         m = re.search(r"([A-Za-z]:[\\/][^\s]+\.md|output[\\/]drafts[\\/][^\s]+\.md)", cmd)
